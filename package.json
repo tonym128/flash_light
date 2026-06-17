@@ -1,0 +1,11 @@
+{
+  "name": "flashy-light",
+  "version": "1.0.0",
+  "description": "Android-compatible Web App to measure light bulb flicker frequency (Hz)",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

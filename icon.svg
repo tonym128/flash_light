@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#0a0f1d" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bulbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="100%" stop-color="#4facfe"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0a0f1d"/>
+  <!-- Glow -->
+  <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
+  <!-- Light Bulb Outline -->
+  <path d="M256,96 C176,96 144,144 144,224 C144,272 176,304 208,336 L208,384 C208,392 216,400 224,400 L288,400 C296,400 304,392 304,384 L304,336 C336,304 368,272 368,224 C368,144 336,96 256,96 Z" fill="none" stroke="url(#bulbGrad)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Filament / Sine Wave inside bulb -->
+  <path d="M208,240 Q232,180 256,240 T304,240" fill="none" stroke="#ffe600" stroke-width="12" stroke-linecap="round"/>
+  <!-- Base of bulb -->
+  <path d="M224,400 L288,400 M216,424 L296,424 M232,448 L280,448" fill="none" stroke="#a0aec0" stroke-width="12" stroke-linecap="round"/>
+  <!-- Glow rays -->
+  <line x1="256" y1="48" x2="256" y2="72" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="108" y1="108" x2="128" y2="128" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="48" y1="256" x2="72" y2="256" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="108" y1="404" x2="128" y2="384" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="404" y1="108" x2="384" y2="128" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="464" y1="256" x2="440" y2="256" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+  <line x1="404" y1="404" x2="384" y2="384" stroke="#00f2fe" stroke-width="12" stroke-linecap="round"/>
+</svg>

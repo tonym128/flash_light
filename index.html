@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>FlickerHz - Light Bulb Frequency Detector</title>
+  
+  <!-- Web App Manifest & Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0a0f1d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FlickerHz">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  
+  <!-- App Container -->
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <svg class="header-logo" viewBox="0 0 512 512">
+          <!-- Outer Glow/Bulb -->
+          <path d="M256,96 C176,96 144,144 144,224 C144,272 176,304 208,336 L208,384 C208,392 216,400 224,400 L288,400 C296,400 304,392 304,384 L304,336 C336,304 368,272 368,224 C368,144 336,96 256,96 Z" fill="none" stroke="#00f2fe" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M208,240 Q232,190 256,240 T304,240" fill="none" stroke="#ffe600" stroke-width="18" stroke-linecap="round"/>
+          <path d="M224,400 L288,400 M216,424 L296,424 M232,448 L280,448" fill="none" stroke="#a0aec0" stroke-width="16" stroke-linecap="round"/>
+        </svg>
+        <h1>Flicker<span>Hz</span></h1>
+      </div>
+      <div class="connection-status">
+        <span id="pwa-status" class="status-badge offline">Offline Ready</span>
+      </div>
+    </header>
+
+    <!-- Main Grid Layout -->
+    <main class="dashboard-grid">
+      
+      <!-- Primary Display Card: Glowing Large Number -->
+      <section class="card primary-display-card">
+        <div class="card-bg-glow"></div>
+        <div class="metric-container">
+          <div class="label">LIGHT SOURCE FREQUENCY</div>
+          <div class="readout">
+            <span id="hz-val">--.-</span><span class="unit">Hz</span>
+          </div>
+          
+          <div class="analysis-status">
+            <span id="status-text">WAITING FOR CAMERA...</span>
+          </div>
+          
+          <!-- Confidence Bar -->
+          <div class="confidence-container">
+            <div class="confidence-label">
+              <span>Signal Confidence</span>
+              <span id="confidence-pct">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="confidence-bar" class="progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+          
+          <!-- Quick matches -->
+          <div class="grid-match-container">
+            <div id="grid-match-tag" class="match-tag none">No Match</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Video Camera Preview Card -->
+      <section class="card preview-card">
+        <div class="card-header">
+          <h2>Camera Input Scanner</h2>
+          <span class="scanner-axis" id="axis-indicator">AUTO SCANNING</span>
+        </div>
+        <div class="preview-viewport">
+          <video id="video-el" autoplay playsinline style="display:none;"></video>
+          <canvas id="preview-canvas"></canvas>
+          <div class="scan-laser-line" id="laser-line"></div>
+          <div class="target-crosshair"></div>
+          
+          <div id="camera-overlay-message" class="overlay-message">
+            <div class="spinner"></div>
+            <p>Requesting camera permission...</p>
+          </div>
+        </div>
+        <div class="preview-footer">
+          <p>⚠️ Point the crosshair directly at the center of the light bulb.</p>
+        </div>
+      </section>
+
+      <!-- Charts & Visualizations Card -->
+      <section class="card charts-card">
+        <div class="card-header">
+          <h2>Signal Diagnostics</h2>
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="oscilloscope">Waveform</button>
+            <button class="tab-btn" data-tab="spectrum">FFT Spectrum</button>
+          </div>
+        </div>
+        
+        <div class="chart-container">
+          <!-- Waveform Chart (Oscilloscope) -->
+          <div class="chart-wrapper active" id="tab-oscilloscope">
+            <canvas id="waveform-canvas"></canvas>
+            <div class="chart-overlay-label">Flicker Waveform (Brightness over scanlines)</div>
+          </div>
+          
+          <!-- Spectrum Chart (FFT) -->
+          <div class="chart-wrapper" id="tab-spectrum">
+            <canvas id="spectrum-canvas"></canvas>
+            <div class="chart-overlay-label">Fourier Transform (Hz Spectrum)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Controls & Settings Card -->
+      <section class="card controls-card">
+        <div class="card-header">
+          <h2>Analyzer Controls</h2>
+        </div>
+        <div class="controls-grid">
+          
+          <!-- Camera Select -->
+          <div class="control-group">
+            <label for="camera-select">Select Camera</label>
+            <select id="camera-select" class="styled-select">
+              <option value="">Loading cameras...</option>
+            </select>
+          </div>
+
+          <!-- Scan Direction Override -->
+          <div class="control-group">
+            <label for="axis-select">Scan Mode</label>
+            <select id="axis-select" class="styled-select">
+              <option value="auto">Auto (Detect Band Axis)</option>
+              <option value="y">Horizontal Bands (Vertical Scan)</option>
+              <option value="x">Vertical Bands (Horizontal Scan)</option>
+            </select>
+          </div>
+
+          <!-- Rolling Shutter Skew Slider -->
+          <div class="control-group slider-group">
+            <div class="slider-header">
+              <label for="skew-slider">Sensor Readout Skew</label>
+              <span id="skew-val">30.0 ms</span>
+            </div>
+            <input type="range" id="skew-slider" min="10.0" max="45.0" step="0.1" value="30.0" class="styled-slider">
+            <div class="slider-labels">
+              <span>10ms (Fast)</span>
+              <span>45ms (Slow)</span>
+            </div>
+          </div>
+
+          <!-- Core Buttons -->
+          <div class="button-row">
+            <button id="freeze-btn" class="btn btn-secondary">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" fill="currentColor"/></svg>
+              <span>Freeze Stream</span>
+            </button>
+            
+            <button id="calibrate-btn" class="btn btn-primary">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z" fill="currentColor"/></svg>
+              <span>Auto Calibrate</span>
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Detailed Instruction & Info Section -->
+    <section class="card info-card">
+      <div class="card-header">
+        <h2>How It Works & Setup Tips</h2>
+      </div>
+      <div class="info-content">
+        <div class="info-item">
+          <h3>📷 The Physics of Rolling Shutter</h3>
+          <p>Smartphone cameras read out the pixel sensor row-by-row (rolling shutter) rather than all at once. When pointing at a flickering light bulb, different rows are exposed at slightly different times. This translates the temporal oscillation of the light into a spatial pattern of dark and bright bands across the frame. By counting these bands relative to the sensor's readout speed, we calculate the exact frequency (Hz).</p>
+        </div>
+        
+        <div class="info-item">
+          <h3>⚙️ How to Get High-Precision Readings</h3>
+          <ul>
+            <li><strong>Increase shutter speed (manual exposure):</strong> If exposure is too long, the bands blur out. To force your phone's camera into high shutter speed, point it directly at a bright light bulb. This forces the camera's auto-exposure to use a very fast shutter speed (under 1ms), producing extremely sharp bands.</li>
+            <li><strong>Hold the phone still:</strong> Keep the phone steady or lean it against a surface so that hand movement doesn't disrupt the spatial bands.</li>
+            <li><strong>Perform the Auto-Calibration:</strong> Every phone's camera sensor has a slightly different row readout speed (rolling shutter skew). Point at a standard non-LED incandescent or fluorescent bulb (which fluctuates at exactly double your AC grid frequency: 100Hz or 120Hz) and press <strong>Auto Calibrate</strong> to save your phone's exact profile!</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>FlickerHz Frequency Meter &copy; 2026. Designed for browser-based mobile diagnostics.</p>
+    </footer>
+
+  </div>
+
+  <!-- Calibration Modal -->
+  <div id="calibration-modal" class="modal">
+    <div class="modal-content card">
+      <div class="modal-header">
+        <h2>Sensor Calibration Wizard</h2>
+        <button id="modal-close-btn" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Step 1: Select Grid Frequency -->
+        <div class="modal-step" id="cal-step-1">
+          <p>To calibrate your phone's camera sensor, you need to point it at a standard bulb connected to your AC mains grid (incandescent or basic fluorescent). These bulbs flicker at exactly double your power grid frequency.</p>
+          
+          <div class="grid-selector">
+            <label>Select your local AC grid frequency:</label>
+            <div class="grid-buttons">
+              <button class="grid-btn active" data-grid="50">
+                <span class="grid-hz">50 Hz Grid</span>
+                <span class="flicker-hz">(100 Hz Flicker)</span>
+                <span class="regions">UK, Europe, Australia, Asia</span>
+              </button>
+              
+              <button class="grid-btn" data-grid="60">
+                <span class="grid-hz">60 Hz Grid</span>
+                <span class="flicker-hz">(120 Hz Flicker)</span>
+                <span class="regions">USA, Canada, Japan, Mexico</span>
+              </button>
+            </div>
+          </div>
+          
+          <button id="cal-next-1" class="btn btn-primary btn-block">Next Step</button>
+        </div>
+
+        <!-- Step 2: Instructions and Live Tracking -->
+        <div class="modal-step hidden" id="cal-step-2">
+          <p class="modal-instruction">Point the camera directly at the light bulb so that clear banding is visible, hold the camera perfectly steady, and press "Start Capture".</p>
+          
+          <div class="calibration-preview-box">
+            <div class="cal-status-label" id="cal-status-text">Ready to capture...</div>
+            <div class="cal-progress-container">
+              <div id="cal-progress-bar" class="progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+          
+          <div class="modal-button-row">
+            <button id="cal-back-2" class="btn btn-secondary">Back</button>
+            <button id="cal-start-btn" class="btn btn-primary">Start Capture</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Success! -->
+        <div class="modal-step hidden" id="cal-step-3">
+          <div class="success-icon">
+            <svg viewBox="0 0 24 24" width="64" height="64"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="#00f2fe"/></svg>
+          </div>
+          <h3>Calibration Complete!</h3>
+          <p class="success-msg">Your camera's rolling shutter readout skew has been measured and calibrated.</p>
+          
+          <table class="calibration-results-table">
+            <tr>
+              <td>Measured Skew:</td>
+              <td id="cal-result-skew" class="highlight">--.- ms</td>
+            </tr>
+            <tr>
+              <td>Readout Line Rate:</td>
+              <td id="cal-result-linerate" class="highlight">--.- μs/line</td>
+            </tr>
+          </table>
+          
+          <button id="cal-finish-btn" class="btn btn-primary btn-block">Apply Calibration</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- JS Scripts -->
+  <script src="app.js"></script>
+</body>
+</html>
