@@ -212,6 +212,89 @@ body {
   text-shadow: 0 0 6px var(--color-secondary-glow);
 }
 
+/* Driver & Flicker Metrics Grid */
+.driver-metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 18px;
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sub-metric-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+
+.sub-metric-card:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.sub-metric-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-muted);
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.sub-metric-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+#flicker-pct-val {
+  font-family: var(--font-digital);
+  font-size: 1.15rem;
+  color: var(--color-primary);
+  text-shadow: 0 0 8px rgba(0, 242, 254, 0.4);
+}
+
+/* Rating Text Colors & Glows */
+.rating-none {
+  color: var(--color-muted);
+}
+
+.rating-excellent {
+  color: var(--color-success);
+  text-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
+}
+
+.rating-high-quality {
+  color: var(--color-primary);
+  text-shadow: 0 0 8px rgba(0, 242, 254, 0.4);
+}
+
+.rating-low-quality {
+  color: var(--color-secondary);
+  text-shadow: 0 0 8px rgba(255, 230, 0, 0.4);
+}
+
+.rating-hazard {
+  color: var(--color-error);
+  text-shadow: 0 0 10px rgba(255, 23, 68, 0.5);
+}
+
+@media (max-width: 480px) {
+  .driver-metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
 /* Confidence Bar */
 .confidence-container {
   margin-top: 20px;

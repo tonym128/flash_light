@@ -76,3 +76,18 @@ $$\text{Flicker Frequency (Hz)} = \frac{\text{Number of Cycles in Frame}}{T_{\te
    $$d = \frac{1}{2} \frac{\alpha - \gamma}{\alpha - 2\beta + \gamma}$$
    $$\text{Interpolated Bin} = p + d$$
    This gives a frequency resolution of $<0.1\text{ Hz}$.
+
+### Driver Quality & Percent Flicker Assessment
+The app computes the **Percent Flicker (Modulation Depth)** of the light source in the center 50% region:
+$$\text{Percent Flicker} = \frac{\text{Detrended Peak-to-Peak Amplitude}}{2 \times \text{Raw Mean Brightness}} \times 100\%$$
+
+It then classifies the internal LED driver quality using thresholds from the **IEEE 1789-2015** safety standards (designed to mitigate stroboscopic hazards and headaches):
+*   **Low-Risk Limit**: $\text{Frequency} \times 0.08$ (for $f \ge 90\text{ Hz}$)
+*   **No Observable Effect (NOEL) Limit**: $\text{Frequency} \times 0.033$ (for $f \ge 90\text{ Hz}$)
+
+**Classification Rules:**
+1.  **EXCELLENT (FLICKER-FREE)**: Percent Flicker $<3\%$ or below the NOEL limit. Indicates a high-end constant-current DC driver.
+2.  **STANDARD/HIGH QUALITY (SAFE)**: Percent Flicker falls within the IEEE 1789 low-risk region.
+3.  **LOW QUALITY (HIGH AC RIPPLE)**: Frequency is near double your AC grid frequency ($100\text{ Hz}$ or $120\text{ Hz}$) but Percent Flicker exceeds the low-risk limit (often $>10\%$). This identifies a cheap driver with inadequate capacitor filtering, letting grid ripple reach the LEDs.
+4.  **LOW QUALITY (LOW-FREQ PWM)**: Frequency is between $100\text{ Hz}$ and $500\text{ Hz}$ with high modulation depth (cheap PWM dimmers).
+

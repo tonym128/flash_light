@@ -90,6 +90,8 @@ const confidenceBarEl = document.getElementById('confidence-bar');
 const gridMatchTagEl = document.getElementById('grid-match-tag');
 const axisIndicatorEl = document.getElementById('axis-indicator');
 const cameraOverlayMessage = document.getElementById('camera-overlay-message');
+const flickerPctValEl = document.getElementById('flicker-pct-val');
+const driverQualityValEl = document.getElementById('driver-quality-val');
 
 const cameraSelect = document.getElementById('camera-select');
 const axisSelect = document.getElementById('axis-select');
@@ -452,11 +454,83 @@ function processFrameLoop() {
       hzValEl.innerText = smoothedFreq.toFixed(1);
       statusTextEl.innerText = "STABLE FLICKER DETECTED";
       statusTextEl.style.color = "var(--color-primary)";
+      
+      // Calculate Percent Flicker (Modulation Depth)
+      let sumRaw = 0;
+      let minDetrended = 999999;
+      let maxDetrended = -999999;
+      const rawSignal = (winner === 'y') ? rowAverages : colAverages;
+      
+      for (let i = startIdx; i < endIdx; i++) {
+        sumRaw += rawSignal[i];
+        if (result.waveform[i] < minDetrended) minDetrended = result.waveform[i];
+        if (result.waveform[i] > maxDetrended) maxDetrended = result.waveform[i];
+      }
+      
+      const meanRaw = sumRaw / span;
+      const peakToPeak = maxDetrended - minDetrended;
+      const percentFlicker = meanRaw > 0 ? (peakToPeak / (2 * meanRaw)) * 100 : 0;
+      
+      // Classify Driver Quality based on IEEE 1789-2015
+      const freq = result.freq;
+      let lowRiskLimit = 8.0;
+      let noelLimit = 3.3;
+      
+      if (freq < 90) {
+        lowRiskLimit = freq * 0.025;
+        noelLimit = freq * 0.01;
+      } else {
+        lowRiskLimit = freq * 0.08;
+        noelLimit = freq * 0.033;
+      }
+      
+      let driverQuality = "UNKNOWN";
+      let ratingClass = "rating-none";
+      
+      if (percentFlicker < 3.0) {
+        driverQuality = "EXCELLENT (FLICKER-FREE)";
+        ratingClass = "rating-excellent";
+      } else if (percentFlicker <= noelLimit) {
+        driverQuality = "HIGH QUALITY (SAFE)";
+        ratingClass = "rating-excellent";
+      } else if (percentFlicker <= lowRiskLimit) {
+        driverQuality = "STANDARD QUALITY (SAFE)";
+        ratingClass = "rating-high-quality";
+      } else {
+        // Exceeds low-risk limit - low quality driver!
+        if (freq >= 90 && freq <= 130) {
+          // Double grid frequency range (typical cheap driver ripple)
+          if (percentFlicker > 30.0) {
+            driverQuality = "LOW QUALITY (HIGH AC RIPPLE)";
+            ratingClass = "rating-hazard";
+          } else {
+            driverQuality = "LOW QUALITY (MODERATE AC RIPPLE)";
+            ratingClass = "rating-low-quality";
+          }
+        } else if (freq > 130 && freq <= 500) {
+          // Low frequency PWM dimmer
+          driverQuality = "LOW QUALITY (LOW-FREQ PWM)";
+          ratingClass = "rating-hazard";
+        } else {
+          // Other frequency, but high flicker depth
+          driverQuality = "LOW QUALITY (UNSTABLE)";
+          ratingClass = "rating-low-quality";
+        }
+      }
+      
+      // Update DOM sub-metrics
+      flickerPctValEl.innerText = percentFlicker.toFixed(1) + '%';
+      driverQualityValEl.innerText = driverQuality;
+      driverQualityValEl.className = 'sub-metric-value ' + ratingClass;
+      
     } else {
       // Decay smoothed metrics slowly
       confidence = Math.max(0, confidence - 3);
       if (confidence === 0) {
         hzValEl.innerText = "--.-";
+        flickerPctValEl.innerText = "--.-%";
+        driverQualityValEl.innerText = "UNKNOWN";
+        driverQualityValEl.className = "sub-metric-value rating-none";
         statusTextEl.innerText = "NO FLICKER DETECTED";
         statusTextEl.style.color = "var(--color-muted)";
       } else {
