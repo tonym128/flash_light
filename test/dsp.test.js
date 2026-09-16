@@ -4,6 +4,9 @@ const {
   detrendInPlace,
   interpolatePeak,
   calculatePercentFlicker,
+  calculateFlickerIndex,
+  calculateHarmonicsAndTHD,
+  calculateAuditStability,
   classifyDriverQuality
 } = require('../dsp.js');
 
@@ -219,6 +222,147 @@ test('classifyDriverQuality adheres to IEEE 1789-2015 boundaries', () => {
   // 7. 60Hz Low-Frequency Boundary (lowRisk = 60 * 0.025 = 1.5%)
   const halfWave = classifyDriverQuality(60, 2.5);
   assert.strictEqual(halfWave.quality, 'LOW QUALITY (UNSTABLE)');
+});
+
+// ==========================================
+// 6. IES Flicker Index Calculation
+// ==========================================
+test('calculateFlickerIndex returns 0 for pure DC light', () => {
+  const n = 512;
+  const raw = new Float32Array(n).fill(120);
+  const waveform = new Float32Array(n).fill(0);
+  const fi = calculateFlickerIndex(raw, waveform, 0, n);
+  assert.strictEqual(fi, 0, 'Pure DC light must have Flicker Index = 0');
+});
+
+test('calculateFlickerIndex calculates ~0.50 for 50% duty cycle square wave', () => {
+  const n = 512;
+  const raw = new Float32Array(n);
+  const waveform = new Float32Array(n);
+  // Square wave: high = 100, low = 0, mean = 50. Waveform: high = +50, low = -50.
+  // Area above mean = 256 * 50 = 12800. Total area = 512 * 50 = 25600.
+  // Flicker Index = 12800 / 25600 = 0.50
+  for (let i = 0; i < n; i++) {
+    const isHigh = (i % 64) < 32;
+    raw[i] = isHigh ? 100 : 0.0001;
+    waveform[i] = isHigh ? 50 : -50;
+  }
+  const fi = calculateFlickerIndex(raw, waveform, 0, n);
+  assert(Math.abs(fi - 0.50) < 0.02, `Square wave Flicker Index ${fi.toFixed(3)} should be ~0.50`);
+});
+
+// ==========================================
+// 7. Harmonic Analysis & Total Harmonic Distortion (THD)
+// ==========================================
+test('calculateHarmonicsAndTHD calculates low THD for pure sine wave', () => {
+  const FFT_SIZE = 4096;
+  const SIGNAL_LEN = 512;
+  const skewSec = 0.030;
+  const fft = new FFT(FFT_SIZE);
+  const real = new Float32Array(FFT_SIZE);
+
+  // Pure 100Hz sine wave
+  for (let i = 0; i < SIGNAL_LEN; i++) {
+    const t = i * (skewSec / SIGNAL_LEN);
+    const hann = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (SIGNAL_LEN - 1)));
+    real[i] = Math.sin(2 * Math.PI * 100 * t) * hann;
+  }
+  fft.forward(real);
+
+  const halfFft = FFT_SIZE / 2;
+  const magnitudes = new Float32Array(halfFft);
+  let peakBin = 0;
+  let maxMag = 0;
+  for (let k = 0; k < halfFft; k++) {
+    magnitudes[k] = Math.sqrt(real[k] * real[k] + fft.imag[k] * fft.imag[k]);
+    if (magnitudes[k] > maxMag) {
+      maxMag = magnitudes[k];
+      peakBin = k;
+    }
+  }
+
+  const { thd } = calculateHarmonicsAndTHD(magnitudes, peakBin, skewSec);
+  assert(thd < 5.0, `Pure sine wave THD ${thd}% should be < 5%`);
+});
+
+test('calculateHarmonicsAndTHD detects 2nd and 3rd harmonics in distorted wave', () => {
+  const FFT_SIZE = 4096;
+  const SIGNAL_LEN = 512;
+  const skewSec = 0.030;
+  const fft = new FFT(FFT_SIZE);
+  const real = new Float32Array(FFT_SIZE);
+
+  // 100Hz fundamental (mag 1.0) + 200Hz 2nd harmonic (mag 0.4) + 300Hz 3rd harmonic (mag 0.2)
+  for (let i = 0; i < SIGNAL_LEN; i++) {
+    const t = i * (skewSec / SIGNAL_LEN);
+    const hann = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (SIGNAL_LEN - 1)));
+    const signal = Math.sin(2 * Math.PI * 100 * t) +
+                   0.4 * Math.sin(2 * Math.PI * 200 * t) +
+                   0.2 * Math.sin(2 * Math.PI * 300 * t);
+    real[i] = signal * hann;
+  }
+  fft.forward(real);
+
+  const halfFft = FFT_SIZE / 2;
+  const magnitudes = new Float32Array(halfFft);
+  let peakBin = 0;
+  let maxMag = 0;
+  // Look for fundamental in 100Hz region
+  const searchMin = Math.floor(80 * 8 * skewSec);
+  const searchMax = Math.ceil(120 * 8 * skewSec);
+  for (let k = 0; k < halfFft; k++) {
+    magnitudes[k] = Math.sqrt(real[k] * real[k] + fft.imag[k] * fft.imag[k]);
+    if (k >= searchMin && k <= searchMax && magnitudes[k] > maxMag) {
+      maxMag = magnitudes[k];
+      peakBin = k;
+    }
+  }
+
+  const { thd, harmonics } = calculateHarmonicsAndTHD(magnitudes, peakBin, skewSec);
+  // Expected THD ~ sqrt(0.4^2 + 0.2^2) / 1.0 * 100 ~ 44.7%
+  assert(thd > 30.0 && thd < 60.0, `Distorted wave THD ${thd}% should be ~44.7%`);
+  assert(harmonics.length >= 2, 'Should detect at least 2nd and 3rd harmonics');
+  assert(Math.abs(harmonics[0].freq - 200) < 5.0, `Harmonic 2 freq ${harmonics[0].freq} should be ~200Hz`);
+});
+
+// ==========================================
+// 8. Audit Stability & Certification
+// ==========================================
+test('calculateAuditStability certifies stable runs as Class A Lab Grade', () => {
+  const stableSamples = [];
+  for (let i = 0; i < 60; i++) {
+    stableSamples.push({
+      timeMs: i * 166,
+      freq: 100.0 + (Math.sin(i) * 0.05), // very small jitter < 0.05 Hz
+      percentFlicker: 12.0 + (Math.cos(i) * 0.1),
+      flickerIndex: 0.038,
+      thd: 4.2,
+      snr: 12.5
+    });
+  }
+
+  const result = calculateAuditStability(stableSamples);
+  assert.strictEqual(result.isCertifiedLabGrade, true);
+  assert(result.stabilityGrade.includes('Class A'));
+  assert(result.stdDevFreq < 0.1);
+});
+
+test('calculateAuditStability classifies jittery runs as Class C', () => {
+  const jitterySamples = [];
+  for (let i = 0; i < 60; i++) {
+    jitterySamples.push({
+      timeMs: i * 166,
+      freq: 100.0 + (Math.random() * 8.0 - 4.0), // high variance ~ 4 Hz
+      percentFlicker: 25.0,
+      flickerIndex: 0.08,
+      thd: 15.0,
+      snr: 3.5
+    });
+  }
+
+  const result = calculateAuditStability(jitterySamples);
+  assert.strictEqual(result.isCertifiedLabGrade, false);
+  assert(result.stabilityGrade.includes('Class C'));
 });
 
 console.log(`\nAll ${testsPassed} DSP unit tests passed successfully!\n`);

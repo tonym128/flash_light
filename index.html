@@ -64,6 +64,14 @@
               <div class="sub-metric-value" id="flicker-pct-val">--.-%</div>
             </div>
             <div class="sub-metric-card">
+              <div class="sub-metric-label">Flicker Index</div>
+              <div class="sub-metric-value" id="flicker-index-val">-.---</div>
+            </div>
+            <div class="sub-metric-card">
+              <div class="sub-metric-label">Waveform THD</div>
+              <div class="sub-metric-value" id="thd-val">--.-%</div>
+            </div>
+            <div class="sub-metric-card">
               <div class="sub-metric-label">Driver Quality</div>
               <div class="sub-metric-value rating-none" id="driver-quality-val">UNKNOWN</div>
             </div>
@@ -102,6 +110,8 @@
           <div class="scan-laser-line" id="laser-line"></div>
           <div class="target-crosshair"></div>
           <div id="exposure-hud" class="exposure-hud optimal">Exposure: Optimal</div>
+          <div id="shutter-hud" class="shutter-hud" style="display:none;">⚠️ Shutter Slow (Averaging)</div>
+          <div id="roi-hud" class="roi-hud">ROI: Auto Core</div>
           
           <div id="camera-overlay-message" class="overlay-message">
             <div class="spinner"></div>
@@ -173,6 +183,15 @@
               <option value="auto">Auto (Detect Band Axis)</option>
               <option value="y">Horizontal Bands (Vertical Scan)</option>
               <option value="x">Vertical Bands (Horizontal Scan)</option>
+            </select>
+          </div>
+
+          <!-- ROI Mode Select -->
+          <div class="control-group">
+            <label for="roi-select">Scanning Region (ROI)</label>
+            <select id="roi-select" class="styled-select">
+              <option value="auto">Auto (Bright Bulb Core)</option>
+              <option value="full">Full Frame</option>
             </select>
           </div>
 
@@ -305,6 +324,18 @@
                 <span class="grid-hz">60 Hz Grid</span>
                 <span class="flicker-hz">(120 Hz Flicker)</span>
                 <span class="regions">USA, Canada, Japan, Mexico</span>
+              </button>
+
+              <button class="grid-btn" data-grid="60screen">
+                <span class="grid-hz">60 Hz Screen</span>
+                <span class="flicker-hz">(60 Hz Refresh)</span>
+                <span class="regions">Standard Monitor / Laptop</span>
+              </button>
+
+              <button class="grid-btn" data-grid="120screen">
+                <span class="grid-hz">120 Hz Screen</span>
+                <span class="flicker-hz">(120 Hz Refresh)</span>
+                <span class="regions">High-Refresh Display</span>
               </button>
             </div>
           </div>

@@ -74,24 +74,31 @@ It runs `analyzeSignal` on both vectors and selects the one with the higher peak
 $$\text{SNR} = \frac{\text{Peak Magnitude}}{\text{Average Magnitude of Search Range}}$$
 If the winning SNR is below a threshold of $3.2$, the system reports "NO FLICKER DETECTED" to prevent noise display.
 
-### 5. Driver Quality & Modulation Depth Math
-To assess driver quality, we measure the **Percent Flicker** (also known as modulation depth). To avoid being distorted by slow spatial lighting gradients across the camera lens (vignetting, bulb positioning), we isolate the AC oscillation amplitude using the detrended signal and measure it relative to the local raw DC average in the center 50% region ($n \in [128, 383]$):
+### 5. Driver Quality, Modulation Depth & IES Flicker Index
+To assess driver quality, the app computes both **Percent Flicker** (modulation depth) and the **IES Flicker Index (RP-16-10)**:
 $$\text{Percent Flicker} = \frac{\max(d[n]) - \min(d[n])}{2 \times \text{mean}(y[n])} \times 100\%$$
+$$\text{Flicker Index} = \frac{\text{Area Above Mean}}{\text{Total Area Under Waveform}} = \frac{\sum_{d[n] > 0} d[n]}{\sum y[n]}$$
 Where:
-- $d[n]$ is the detrended signal (representing the AC ripple).
-- $y[n]$ is the raw signal (representing the combined DC + AC illumination).
+- $d[n]$ is the detrended signal (representing the zero-mean AC ripple).
+- $y[n]$ is the raw signal (representing total optical illumination).
 
-We compare this calculated percentage against the **IEEE 1789-2015** standard limits:
+We compare Percent Flicker against **IEEE 1789-2015** standard limits:
 - For $f < 90\text{ Hz}$: Low Risk = $f \times 0.025$, NOEL = $f \times 0.01$
 - For $f \ge 90\text{ Hz}$: Low Risk = $f \times 0.08$, NOEL = $f \times 0.033$
 
-**Classification Logic in `app.js`:**
--   `percentFlicker < 3.0%` or `percentFlicker <= noelLimit`: `EXCELLENT (FLICKER-FREE)` or `HIGH QUALITY (SAFE)`
--   `percentFlicker <= lowRiskLimit`: `STANDARD QUALITY (SAFE)`
--   `percentFlicker > lowRiskLimit`:
-    -   If $f \in [90, 130]\text{ Hz}$: `LOW QUALITY (MODERATE AC RIPPLE)` (if $<30\%$) or `LOW QUALITY (HIGH AC RIPPLE)` (if $>30\%$). This identifies cheap drivers lacking electrolytic smoothing capacitors.
-    -   If $f \in [130, 500]\text{ Hz}$: `LOW QUALITY (LOW-FREQ PWM)` (indicates cheap dimming circuitry with stroboscopic hazards).
-    -   Other ranges: `LOW QUALITY (UNSTABLE)`
+### 6. Harmonic Analysis & Total Harmonic Distortion (THD)
+To detect triac phase-cut dimmers and cheap linear non-isolated drivers, the DSP searches for harmonic overtones $H_2 \dots H_5$ ($2f_1, 3f_1, 4f_1, 5f_1$):
+$$\text{THD} = \frac{\sqrt{\sum_{h=2}^5 V_h^2}}{V_1} \times 100\%$$
+Pure constant-current drivers exhibit $THD < 5\%$, whereas distorted half-wave drivers produce $THD > 40\%$.
+
+### 7. Dynamic ROI Core Tracking
+To isolate the light source and prevent dark surrounding boundaries from diluting the modulation depth, the app evaluates a coarse 2D grid every frame. Pixels with luminance $Y > 0.45 \times Y_{\max}$ determine the core bounding box $[x_{\min}, x_{\max}]$ and $[y_{\min}, y_{\max}]$. The ROI bounds are smoothed using an exponential moving average ($15\%$ blend per frame) to prevent jitter.
+
+### 8. Audit Stability Analysis & Lab Certification
+During the 10-second capture, the standard deviation of estimated frequency ($\sigma_f$) and signal-to-noise ratio ($SNR$) are evaluated:
+- **Class A (Lab Certified / High Precision)**: $\sigma_f < 0.25\text{ Hz}$ and $\text{SNR} \ge 7.0\text{ dB}$.
+- **Class B (Field Stable)**: $\sigma_f < 0.80\text{ Hz}$ and $\text{SNR} \ge 4.0\text{ dB}$.
+- **Class C (Marginal / Environmental Noise)**: $\sigma_f \ge 0.80\text{ Hz}$ or $\text{SNR} < 4.0\text{ dB}$.
 
 ---
 

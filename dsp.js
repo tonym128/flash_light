@@ -202,6 +202,158 @@ function classifyDriverQuality(freq, percentFlicker) {
   }
 }
 
+// Calculate IES Flicker Index (Area Above Mean / Total Area Under Waveform)
+// RP-16-10 / IESNA Standard: ranges from 0.0 (pure DC) to 1.0 (extreme pulse)
+function calculateFlickerIndex(rawSignal, waveform, startIdx, endIdx) {
+  let sumRaw = 0;
+  let areaAboveMean = 0;
+  const span = endIdx - startIdx;
+  if (span <= 0) return 0;
+  
+  for (let i = startIdx; i < endIdx; i++) {
+    sumRaw += rawSignal[i];
+    if (waveform[i] > 0) {
+      areaAboveMean += waveform[i];
+    }
+  }
+  
+  const totalArea = sumRaw; // integral of raw illumination across span
+  if (totalArea <= 0) return 0;
+  
+  const flickerIndex = areaAboveMean / totalArea;
+  return Math.max(0, Math.min(1.0, flickerIndex));
+}
+
+// Total Harmonic Distortion (THD) and Harmonic Overtones Detection
+// Calculates THD = sqrt(sum(V_h^2)) / V_1 * 100% for h = 2..5
+function calculateHarmonicsAndTHD(magnitudes, peakBin, skewSec, maxHarmonics = 5) {
+  if (!magnitudes || peakBin <= 0 || peakBin >= magnitudes.length) {
+    return { thd: 0, harmonics: [] };
+  }
+  
+  const fundamentalMag = magnitudes[peakBin];
+  if (fundamentalMag <= 0) {
+    return { thd: 0, harmonics: [] };
+  }
+  
+  const halfFft = magnitudes.length;
+  let sumHarmonicSq = 0;
+  const harmonics = [];
+  
+  for (let h = 2; h <= maxHarmonics; h++) {
+    const targetBin = Math.round(peakBin * h);
+    if (targetBin >= halfFft - 2) break;
+    
+    // Search within +/- 2 bins around expected harmonic
+    let bestBin = targetBin;
+    let bestMag = 0;
+    const searchStart = Math.max(1, targetBin - 2);
+    const searchEnd = Math.min(halfFft - 2, targetBin + 2);
+    
+    for (let b = searchStart; b <= searchEnd; b++) {
+      if (magnitudes[b] > bestMag) {
+        bestMag = magnitudes[b];
+        bestBin = b;
+      }
+    }
+    
+    const interpBin = interpolatePeak(magnitudes, bestBin);
+    const harmonicFreq = interpBin / (8 * skewSec);
+    const harmonicRatio = (bestMag / fundamentalMag) * 100;
+    
+    harmonics.push({
+      harmonic: h,
+      bin: interpBin,
+      freq: harmonicFreq,
+      mag: bestMag,
+      ratioPercent: harmonicRatio
+    });
+    
+    sumHarmonicSq += bestMag * bestMag;
+  }
+  
+  const thd = (Math.sqrt(sumHarmonicSq) / fundamentalMag) * 100;
+  return {
+    thd: parseFloat(thd.toFixed(1)),
+    harmonics
+  };
+}
+
+// Audit Stability Analysis and Lab Certification Classification
+function calculateAuditStability(samples) {
+  if (!samples || samples.length === 0) {
+    return {
+      count: 0,
+      meanFreq: 0,
+      stdDevFreq: 0,
+      meanFlicker: 0,
+      stdDevFlicker: 0,
+      meanFlickerIndex: 0,
+      meanTHD: 0,
+      meanSNR: 0,
+      stabilityGrade: 'N/A',
+      isCertifiedLabGrade: false
+    };
+  }
+  
+  const n = samples.length;
+  let sumFreq = 0;
+  let sumFlicker = 0;
+  let sumFlickerIndex = 0;
+  let sumTHD = 0;
+  let sumSNR = 0;
+  
+  for (let i = 0; i < n; i++) {
+    const s = samples[i];
+    sumFreq += s.freq || 0;
+    sumFlicker += s.percentFlicker || 0;
+    sumFlickerIndex += s.flickerIndex || 0;
+    sumTHD += s.thd || 0;
+    sumSNR += s.snr || 0;
+  }
+  
+  const meanFreq = sumFreq / n;
+  const meanFlicker = sumFlicker / n;
+  const meanFlickerIndex = sumFlickerIndex / n;
+  const meanTHD = sumTHD / n;
+  const meanSNR = sumSNR / n;
+  
+  let varFreq = 0;
+  let varFlicker = 0;
+  for (let i = 0; i < n; i++) {
+    const df = (samples[i].freq || 0) - meanFreq;
+    const dp = (samples[i].percentFlicker || 0) - meanFlicker;
+    varFreq += df * df;
+    varFlicker += dp * dp;
+  }
+  
+  const stdDevFreq = Math.sqrt(varFreq / n);
+  const stdDevFlicker = Math.sqrt(varFlicker / n);
+  
+  let stabilityGrade = 'Class C (Unstable / Environmental Noise)';
+  let isCertifiedLabGrade = false;
+  
+  if (stdDevFreq < 0.25 && meanSNR >= 7.0) {
+    stabilityGrade = 'Class A (Lab Certified / High Precision)';
+    isCertifiedLabGrade = true;
+  } else if (stdDevFreq < 0.8 && meanSNR >= 4.0) {
+    stabilityGrade = 'Class B (Field Stable)';
+  }
+  
+  return {
+    count: n,
+    meanFreq: parseFloat(meanFreq.toFixed(2)),
+    stdDevFreq: parseFloat(stdDevFreq.toFixed(2)),
+    meanFlicker: parseFloat(meanFlicker.toFixed(2)),
+    stdDevFlicker: parseFloat(stdDevFlicker.toFixed(2)),
+    meanFlickerIndex: parseFloat(meanFlickerIndex.toFixed(3)),
+    meanTHD: parseFloat(meanTHD.toFixed(1)),
+    meanSNR: parseFloat(meanSNR.toFixed(1)),
+    stabilityGrade,
+    isCertifiedLabGrade
+  };
+}
+
 // Universal Module Export (Browser Window + CommonJS / Node.js)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -209,6 +361,9 @@ if (typeof module !== 'undefined' && module.exports) {
     detrendInPlace,
     interpolatePeak,
     calculatePercentFlicker,
+    calculateFlickerIndex,
+    calculateHarmonicsAndTHD,
+    calculateAuditStability,
     classifyDriverQuality
   };
 } else if (typeof window !== 'undefined') {
@@ -216,5 +371,8 @@ if (typeof module !== 'undefined' && module.exports) {
   window.detrendInPlace = detrendInPlace;
   window.interpolatePeak = interpolatePeak;
   window.calculatePercentFlicker = calculatePercentFlicker;
+  window.calculateFlickerIndex = calculateFlickerIndex;
+  window.calculateHarmonicsAndTHD = calculateHarmonicsAndTHD;
+  window.calculateAuditStability = calculateAuditStability;
   window.classifyDriverQuality = classifyDriverQuality;
 }
