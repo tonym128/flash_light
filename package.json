@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "test": "node test/dsp.test.js"
+    "test": "node test/dsp.test.js && node test/integration.test.js"
   },
   "dependencies": {},
   "devDependencies": {}

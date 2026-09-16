@@ -1,70 +1,7 @@
 // ==========================================
-// Radix-2 Cooley-Tukey FFT Implementation
+// Application State & Globals
+// (Core DSP math and FFT are imported from dsp.js)
 // ==========================================
-class FFT {
-  constructor(size) {
-    this.size = size;
-    this.cosTable = new Float32Array(size);
-    this.sinTable = new Float32Array(size);
-    for (let i = 0; i < size; i++) {
-      let angle = -2 * Math.PI * i / size;
-      this.cosTable[i] = Math.cos(angle);
-      this.sinTable[i] = Math.sin(angle);
-    }
-    this.imag = new Float32Array(size);
-    this.reversedIndices = new Int32Array(size);
-    this._precomputeReversedIndices();
-  }
-
-  _precomputeReversedIndices() {
-    const n = this.size;
-    for (let i = 0; i < n; i++) {
-      let rev = 0;
-      let temp = i;
-      for (let j = 1; j < n; j <<= 1) {
-        rev = (rev << 1) | (temp & 1);
-        temp >>= 1;
-      }
-      this.reversedIndices[i] = rev;
-    }
-  }
-
-  forward(real) {
-    const n = this.size;
-    const imag = this.imag;
-    imag.fill(0);
-
-    // Bit-reversal permutation
-    const rev = this.reversedIndices;
-    for (let i = 0; i < n; i++) {
-      let rIdx = rev[i];
-      if (i < rIdx) {
-        let temp = real[i];
-        real[i] = real[rIdx];
-        real[rIdx] = temp;
-      }
-    }
-
-    // Cooley-Tukey decimation-in-time
-    for (let size = 2; size <= n; size <<= 1) {
-      let halfSize = size >> 1;
-      let tabStep = n / size;
-      for (let i = 0; i < n; i += size) {
-        for (let j = i, k = 0; j < i + halfSize; j++, k += tabStep) {
-          let l = j + halfSize;
-          let c = this.cosTable[k];
-          let s = this.sinTable[k];
-          let tReal = real[l] * c - imag[l] * s;
-          let tImag = real[l] * s + imag[l] * c;
-          real[l] = real[j] - tReal;
-          imag[l] = imag[j] - tImag;
-          real[j] += tReal;
-          imag[j] += tImag;
-        }
-      }
-    }
-  }
-}
 
 // ==========================================
 // Application State & Globals
