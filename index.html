@@ -91,13 +91,17 @@
       <section class="card preview-card">
         <div class="card-header">
           <h2>Camera Input Scanner</h2>
-          <span class="scanner-axis" id="axis-indicator">AUTO SCANNING</span>
+          <div class="header-badges">
+            <span class="badge-sub" id="camera-mode-badge">Auto Exposure</span>
+            <span class="scanner-axis" id="axis-indicator">AUTO SCANNING</span>
+          </div>
         </div>
         <div class="preview-viewport">
           <video id="video-el" autoplay playsinline style="display:none;"></video>
           <canvas id="preview-canvas"></canvas>
           <div class="scan-laser-line" id="laser-line"></div>
           <div class="target-crosshair"></div>
+          <div id="exposure-hud" class="exposure-hud optimal">Exposure: Optimal</div>
           
           <div id="camera-overlay-message" class="overlay-message">
             <div class="spinner"></div>
@@ -138,12 +142,25 @@
       <section class="card controls-card">
         <div class="card-header">
           <h2>Analyzer Controls</h2>
+          <span class="sensor-profile-info" id="sensor-profile-info">Profile: Default (30.0ms)</span>
         </div>
         <div class="controls-grid">
           
+          <!-- Signal Source Select (Live vs Synthetic) -->
+          <div class="control-group">
+            <label for="test-signal-select">Signal Source</label>
+            <select id="test-signal-select" class="styled-select">
+              <option value="live">📷 Live Camera Video</option>
+              <option value="test-100">🧪 Synthetic 100 Hz AC Ripple (50Hz Grid, 40% Ripple)</option>
+              <option value="test-120">🧪 Synthetic 120 Hz AC Ripple (60Hz Grid, 40% Ripple)</option>
+              <option value="test-pwm250">🧪 Synthetic 250 Hz PWM Square (Hazardous, 100% Ripple)</option>
+              <option value="test-dc">🧪 Synthetic 0 Hz Pure DC (Flicker-Free, 0% Ripple)</option>
+            </select>
+          </div>
+
           <!-- Camera Select -->
           <div class="control-group">
-            <label for="camera-select">Select Camera</label>
+            <label for="camera-select">Select Camera Lens</label>
             <select id="camera-select" class="styled-select">
               <option value="">Loading cameras...</option>
             </select>
@@ -185,6 +202,49 @@
             </button>
           </div>
 
+        </div>
+      </section>
+
+      <!-- Session Recording & Report Card -->
+      <section class="card recording-card">
+        <div class="card-header">
+          <h2>Session Recorder & Certification</h2>
+          <span id="record-status-badge" class="scanner-axis">STANDBY</span>
+        </div>
+        <div class="recording-controls">
+          <p class="rec-desc">Capture a 10-second audit sample to evaluate driver stability, export raw time-series datasets, or generate an eye safety certificate.</p>
+          
+          <div class="rec-progress-container" id="rec-progress-container" style="display:none;">
+            <div class="progress-track">
+              <div class="progress-fill" id="rec-progress-bar" style="width: 0%;"></div>
+            </div>
+            <div class="rec-progress-label">
+              <span id="rec-timer-label">Recording: 0.0s / 10.0s</span>
+              <span id="rec-samples-count">0 samples</span>
+            </div>
+          </div>
+          
+          <div class="rec-button-row">
+            <button id="start-rec-btn" class="btn btn-primary">
+              <svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>
+              <span id="start-rec-label">Record 10s Audit</span>
+            </button>
+            <button id="export-card-btn" class="btn btn-secondary">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" fill="currentColor"/></svg>
+              <span>Report Card (PNG)</span>
+            </button>
+          </div>
+
+          <div class="export-download-row" id="export-download-row" style="display:none;">
+            <button id="download-csv-btn" class="btn btn-secondary btn-sm">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
+              <span>Download CSV</span>
+            </button>
+            <button id="download-json-btn" class="btn btn-secondary btn-sm">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
+              <span>Download JSON</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -296,6 +356,7 @@
   </div>
 
   <!-- JS Scripts -->
+  <script src="dsp.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

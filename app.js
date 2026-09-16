@@ -93,6 +93,25 @@ const cameraOverlayMessage = document.getElementById('camera-overlay-message');
 const flickerPctValEl = document.getElementById('flicker-pct-val');
 const driverQualityValEl = document.getElementById('driver-quality-val');
 
+// New HUD & Lens Profile DOM elements
+const exposureHudEl = document.getElementById('exposure-hud');
+const cameraModeBadgeEl = document.getElementById('camera-mode-badge');
+const sensorProfileInfoEl = document.getElementById('sensor-profile-info');
+const testSignalSelect = document.getElementById('test-signal-select');
+
+// Session Recorder DOM elements
+const startRecBtn = document.getElementById('start-rec-btn');
+const startRecLabel = document.getElementById('start-rec-label');
+const exportCardBtn = document.getElementById('export-card-btn');
+const recProgressContainer = document.getElementById('rec-progress-container');
+const recProgressBar = document.getElementById('rec-progress-bar');
+const recTimerLabel = document.getElementById('rec-timer-label');
+const recSamplesCount = document.getElementById('rec-samples-count');
+const exportDownloadRow = document.getElementById('export-download-row');
+const downloadCsvBtn = document.getElementById('download-csv-btn');
+const downloadJsonBtn = document.getElementById('download-json-btn');
+const recordStatusBadge = document.getElementById('record-status-badge');
+
 const cameraSelect = document.getElementById('camera-select');
 const axisSelect = document.getElementById('axis-select');
 const skewSlider = document.getElementById('skew-slider');
@@ -140,11 +159,54 @@ let skewSeconds = 0.030; // default rolling shutter skew (30ms)
 let scanMode = 'auto'; // 'auto', 'x', 'y'
 let currentActiveAxis = 'y'; // 'y' = horizontal bands (vertical scanning), 'x' = vertical bands (horizontal scanning)
 
+// Multi-Lens Profile state
+let activeDeviceId = 'default';
+let activeResolution = '1280x720';
+let activeLensName = 'Default Camera';
+
+// Signal Source & Synthetic Test Generator state
+let signalSource = 'live'; // 'live', 'test-100', 'test-120', 'test-pwm250', 'test-dc'
+let syntheticPhase = 0;
+
+// Session Recording state
+let isRecording = false;
+let recordStartTime = 0;
+let recordSamples = [];
+const RECORD_DURATION_MS = 10000;
+
 // Real-time smoothed metrics
 let smoothedFreq = 0;
 let confidence = 0;
 let signalWaveformBuffer = new Float32Array(SIGNAL_LEN);
 let fftMagnitudesBuffer = new Float32Array(FFT_SIZE / 2);
+
+// ==========================================
+// Pre-allocated Zero-GC Scratch Buffers
+// ==========================================
+const colAverages = new Float32Array(SIGNAL_LEN);
+const rowAverages = new Float32Array(SIGNAL_LEN);
+const detrendScratch = new Float32Array(SIGNAL_LEN);
+const windowedScratch = new Float32Array(SIGNAL_LEN);
+const realBufferScratch = new Float32Array(FFT_SIZE);
+
+// Pre-allocated Analysis Result Objects
+const analysisResultY = {
+  freq: 0,
+  snr: 0,
+  peakBin: 0,
+  peakMag: 0,
+  waveform: new Float32Array(SIGNAL_LEN),
+  magnitudes: new Float32Array(FFT_SIZE / 2)
+};
+
+const analysisResultX = {
+  freq: 0,
+  snr: 0,
+  peakBin: 0,
+  peakMag: 0,
+  waveform: new Float32Array(SIGNAL_LEN),
+  magnitudes: new Float32Array(FFT_SIZE / 2)
+};
 
 // Calibration State
 let isCalibrating = false;
@@ -152,22 +214,47 @@ let calTargetFreq = 100; // default 50Hz grid -> 100Hz flicker
 let calPeaks = [];
 const CAL_SAMPLES_NEEDED = 60;
 
-// Load Skew from LocalStorage
-const savedSkew = localStorage.getItem('rolling_shutter_skew');
-if (savedSkew) {
-  skewSeconds = parseFloat(savedSkew);
-  skewSlider.value = (skewSeconds * 1000).toFixed(1);
-  skewValEl.innerText = (skewSeconds * 1000).toFixed(1) + ' ms';
+// ==========================================
+// Multi-Lens Profile Persistence
+// ==========================================
+function getLensStorageKey(deviceId, resolution) {
+  return `rolling_shutter_skew_${deviceId || 'default'}_${resolution || 'default'}`;
 }
 
+function loadLensProfile(deviceId, resolution, lensName) {
+  const key = getLensStorageKey(deviceId, resolution);
+  const saved = localStorage.getItem(key) || localStorage.getItem('rolling_shutter_skew');
+  if (saved) {
+    skewSeconds = parseFloat(saved);
+  } else {
+    skewSeconds = 0.030;
+  }
+  skewSlider.value = (skewSeconds * 1000).toFixed(1);
+  skewValEl.innerText = (skewSeconds * 1000).toFixed(1) + ' ms';
+  if (sensorProfileInfoEl) {
+    sensorProfileInfoEl.innerText = `${lensName}: ${(skewSeconds * 1000).toFixed(1)}ms`;
+  }
+}
+
+function saveLensProfile(deviceId, resolution, skewVal, lensName) {
+  const key = getLensStorageKey(deviceId, resolution);
+  localStorage.setItem(key, skewVal);
+  localStorage.setItem('rolling_shutter_skew', skewVal);
+  if (sensorProfileInfoEl) {
+    sensorProfileInfoEl.innerText = `${lensName}: ${(skewVal * 1000).toFixed(1)}ms`;
+  }
+}
+
+// Initial profile load
+loadLensProfile(activeDeviceId, activeResolution, activeLensName);
+
 // ==========================================
-// Signal Processing Helpers
+// Signal Processing Helpers (Zero-Allocation)
 // ==========================================
 
-// O(n) detrending using moving average
-function detrend(signal, windowSize) {
+// In-place O(n) detrending using moving average
+function detrendInPlace(signal, windowSize, outBuffer) {
   const n = signal.length;
-  const result = new Float32Array(n);
   const half = Math.floor(windowSize / 2);
   
   let sum = 0;
@@ -192,9 +279,8 @@ function detrend(signal, windowSize) {
     }
     
     let average = sum / count;
-    result[i] = signal[i] - average;
+    outBuffer[i] = signal[i] - average;
   }
-  return result;
 }
 
 // Parabolic interpolation for sub-bin peak precision
@@ -211,30 +297,29 @@ function interpolatePeak(magnitudes, p) {
   return p + d;
 }
 
-// Analyze signal for dominant frequency
-function analyzeSignal(rawSignal, skewSec) {
-  // 1. Detrend signal (window size ~ 18ms to remove spatial gradients)
-  const windowSamples = Math.max(16, Math.min(256, Math.round(SIGNAL_LEN * (0.015 / skewSec))));
-  const detrended = detrend(rawSignal, windowSamples);
+// Analyze signal for dominant frequency in-place into outResult
+function analyzeSignalInPlace(rawSignal, skewSec, outResult) {
+  // 1. Detrend signal (window size ~ 25ms to preserve 50Hz/60Hz half-wave rectification)
+  const windowSamples = Math.max(24, Math.min(320, Math.round(SIGNAL_LEN * (0.025 / skewSec))));
+  detrendInPlace(rawSignal, windowSamples, outResult.waveform);
   
   // 2. Apply Hanning window
-  const windowed = new Float32Array(SIGNAL_LEN);
   for (let i = 0; i < SIGNAL_LEN; i++) {
-    windowed[i] = detrended[i] * hanningWindow[i];
+    windowedScratch[i] = outResult.waveform[i] * hanningWindow[i];
   }
   
   // 3. Zero-pad to FFT size (4096)
-  const realBuffer = new Float32Array(FFT_SIZE);
-  realBuffer.set(windowed); // Zero-padding automatically occurs because remaining indices are 0
+  realBufferScratch.fill(0);
+  realBufferScratch.set(windowedScratch);
   
   // 4. Run FFT
-  fft.forward(realBuffer);
+  fft.forward(realBufferScratch);
   
   // 5. Compute Magnitudes (up to Nyquist frequency: FFT_SIZE/2)
   const halfFft = FFT_SIZE / 2;
-  const magnitudes = new Float32Array(halfFft);
+  const magnitudes = outResult.magnitudes;
   for (let k = 0; k < halfFft; k++) {
-    const r = realBuffer[k];
+    const r = realBufferScratch[k];
     const im = fft.imag[k];
     magnitudes[k] = Math.sqrt(r * r + im * im);
   }
@@ -263,14 +348,10 @@ function analyzeSignal(rawSignal, skewSec) {
   const interpolatedBin = interpolatePeak(magnitudes, peakBin);
   const freq = interpolatedBin / (8 * skewSec);
   
-  return {
-    freq,
-    snr,
-    peakBin,
-    peakMag: maxMag,
-    waveform: detrended,
-    magnitudes
-  };
+  outResult.freq = freq;
+  outResult.snr = snr;
+  outResult.peakBin = peakBin;
+  outResult.peakMag = maxMag;
 }
 
 // ==========================================
@@ -315,6 +396,109 @@ async function initCamera() {
   }
 }
 
+async function configureOptimalCameraSettings(track) {
+  if (!track || !track.getCapabilities) return;
+  const capabilities = track.getCapabilities();
+  const advancedConstraints = {};
+  let manualExposureApplied = false;
+
+  // 1. Check exposureMode
+  if (capabilities.exposureMode && capabilities.exposureMode.includes('manual')) {
+    advancedConstraints.exposureMode = 'manual';
+    manualExposureApplied = true;
+  }
+
+  // 2. Request minimum exposure time to freeze rolling bands (target < 1ms or min available)
+  if (capabilities.exposureTime) {
+    advancedConstraints.exposureTime = capabilities.exposureTime.min || 1;
+    manualExposureApplied = true;
+  }
+
+  // 3. Lock continuous focus to avoid focus hunting on high-contrast stripes
+  if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+    advancedConstraints.focusMode = 'continuous';
+  }
+
+  // 4. Set continuous white balance
+  if (capabilities.whiteBalanceMode && capabilities.whiteBalanceMode.includes('continuous')) {
+    advancedConstraints.whiteBalanceMode = 'continuous';
+  }
+
+  if (Object.keys(advancedConstraints).length > 0) {
+    try {
+      await track.applyConstraints({ advanced: [advancedConstraints] });
+      console.log('Applied advanced camera constraints:', advancedConstraints);
+    } catch (err) {
+      console.warn('Advanced camera constraints rejected by HAL:', err);
+      manualExposureApplied = false;
+    }
+  }
+
+  if (cameraModeBadgeEl) {
+    if (manualExposureApplied) {
+      cameraModeBadgeEl.innerText = 'Manual Shutter';
+      cameraModeBadgeEl.className = 'badge-sub manual';
+    } else {
+      cameraModeBadgeEl.innerText = 'Auto Exposure';
+      cameraModeBadgeEl.className = 'badge-sub';
+    }
+  }
+}
+
+// Generate mathematically precise synthetic scanlines for test mode
+function generateSyntheticFrame(mode, skewSec) {
+  const w = SIGNAL_LEN;
+  const h = SIGNAL_LEN;
+  const imgData = offscreenCtx.createImageData(w, h);
+  const data = imgData.data;
+  
+  syntheticPhase += 0.05;
+  
+  let targetHz = 100;
+  let modulationDepth = 0.40; // 40% ripple
+  let isSquare = false;
+  
+  if (mode === 'test-100') {
+    targetHz = 100;
+    modulationDepth = 0.40;
+  } else if (mode === 'test-120') {
+    targetHz = 120;
+    modulationDepth = 0.40;
+  } else if (mode === 'test-pwm250') {
+    targetHz = 250;
+    modulationDepth = 1.0;
+    isSquare = true;
+  } else if (mode === 'test-dc') {
+    targetHz = 0;
+    modulationDepth = 0.0;
+  }
+  
+  const baseline = 128;
+  
+  for (let y = 0; y < h; y++) {
+    const t = (y / h) * skewSec + (syntheticPhase / (2 * Math.PI * (targetHz || 1)));
+    let osc = 0;
+    if (targetHz > 0) {
+      if (isSquare) {
+        osc = Math.sin(2 * Math.PI * targetHz * t) >= 0 ? 1 : -1;
+      } else {
+        osc = Math.sin(2 * Math.PI * targetHz * t);
+      }
+    }
+    const lum = Math.min(255, Math.max(0, Math.round(baseline + baseline * modulationDepth * osc)));
+    
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      data[idx] = lum;
+      data[idx+1] = lum;
+      data[idx+2] = lum;
+      data[idx+3] = 255;
+    }
+  }
+  
+  offscreenCtx.putImageData(imgData, 0, 0);
+}
+
 async function startStreaming(deviceId) {
   stopStream();
   cameraOverlayMessage.style.display = 'flex';
@@ -339,10 +523,18 @@ async function startStreaming(deviceId) {
       videoEl.onloadedmetadata = () => resolve();
     });
     
-    // Apply manual options if browser supports them
+    activeDeviceId = deviceId || 'default';
+    activeResolution = `${videoEl.videoWidth || 1280}x${videoEl.videoHeight || 720}`;
+    
+    const selectedOption = cameraSelect.options[cameraSelect.selectedIndex];
+    activeLensName = selectedOption ? selectedOption.text : 'Default Camera';
+    
+    // Load profile specific to this camera lens & resolution
+    loadLensProfile(activeDeviceId, activeResolution, activeLensName);
+    
+    // Apply optimal manual options if browser supports them
     const track = stream.getVideoTracks()[0];
-    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-    console.log('Camera capabilities:', capabilities);
+    await configureOptimalCameraSettings(track);
     
     // Hide loading overlay
     cameraOverlayMessage.style.display = 'none';
@@ -376,21 +568,60 @@ function processFrameLoop() {
     return;
   }
   
-  if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
-    // 1. Draw frame to offscreen square canvas for mathematical analysis
-    offscreenCtx.drawImage(videoEl, 0, 0, SIGNAL_LEN, SIGNAL_LEN);
+  const hasLiveVideo = videoEl.readyState === videoEl.HAVE_ENOUGH_DATA;
+  const isSynthetic = signalSource !== 'live';
+  
+  if (hasLiveVideo || isSynthetic) {
+    // 1. Acquire frame (from live camera or synthetic generator)
+    if (isSynthetic) {
+      generateSyntheticFrame(signalSource, skewSeconds);
+    } else {
+      offscreenCtx.drawImage(videoEl, 0, 0, SIGNAL_LEN, SIGNAL_LEN);
+    }
+    
     const imgData = offscreenCtx.getImageData(0, 0, SIGNAL_LEN, SIGNAL_LEN);
     const pixels = imgData.data;
-    
-    // 2. Sample horizontal (colAverages) and vertical (rowAverages) signals
-    const colAverages = new Float32Array(SIGNAL_LEN);
-    const rowAverages = new Float32Array(SIGNAL_LEN);
     
     const startIdx = 128; // Center 50% start
     const endIdx = 384;   // Center 50% end
     const span = endIdx - startIdx;
     
-    // Row averages (corresponds to horizontal stripes / vertical scanning axis Y)
+    // 2. Exposure HUD Saturation & Under-exposure check in ROI
+    let saturatedCount = 0;
+    let roiLuminanceSum = 0;
+    const roiPixelCount = span * span;
+    
+    for (let y = startIdx; y < endIdx; y++) {
+      for (let x = startIdx; x < endIdx; x++) {
+        const idx = (y * SIGNAL_LEN + x) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx+1];
+        const b = pixels[idx+2];
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        roiLuminanceSum += lum;
+        if (lum >= 250 || (r >= 250 && g >= 250 && b >= 250)) {
+          saturatedCount++;
+        }
+      }
+    }
+    
+    const meanRoiLuminance = roiLuminanceSum / roiPixelCount;
+    const satPercent = (saturatedCount / roiPixelCount) * 100;
+    
+    if (exposureHudEl) {
+      if (satPercent > 8.0) {
+        exposureHudEl.innerText = `⚠️ OVERFLOW (${satPercent.toFixed(0)}% clipped): Step back`;
+        exposureHudEl.className = 'exposure-hud saturated';
+      } else if (meanRoiLuminance < 25) {
+        exposureHudEl.innerText = `⚠️ UNDEREXPOSED (${meanRoiLuminance.toFixed(0)} lum): Move closer`;
+        exposureHudEl.className = 'exposure-hud underexposed';
+      } else {
+        exposureHudEl.innerText = `Exposure: Optimal (${Math.round(meanRoiLuminance)} lum)`;
+        exposureHudEl.className = 'exposure-hud optimal';
+      }
+    }
+    
+    // 3. Pre-allocated sample horizontal and vertical signals (Zero-GC)
     for (let y = 0; y < SIGNAL_LEN; y++) {
       let sum = 0;
       for (let x = startIdx; x < endIdx; x++) {
@@ -400,7 +631,6 @@ function processFrameLoop() {
       rowAverages[y] = sum / span;
     }
     
-    // Column averages (corresponds to vertical stripes / horizontal scanning axis X)
     for (let x = 0; x < SIGNAL_LEN; x++) {
       let sum = 0;
       for (let y = startIdx; y < endIdx; y++) {
@@ -410,24 +640,23 @@ function processFrameLoop() {
       colAverages[x] = sum / span;
     }
     
-    // 3. Process signals for both axes
-    const resY = analyzeSignal(rowAverages, skewSeconds);
-    const resX = analyzeSignal(colAverages, skewSeconds);
+    // 4. In-place process signals for both axes
+    analyzeSignalInPlace(rowAverages, skewSeconds, analysisResultY);
+    analyzeSignalInPlace(colAverages, skewSeconds, analysisResultX);
     
-    // 4. Select the winning axis (higher SNR)
+    // 5. Select winning axis (higher SNR)
     let winner = 'y';
     if (scanMode === 'auto') {
-      winner = (resX.snr > resY.snr) ? 'x' : 'y';
+      winner = (analysisResultX.snr > analysisResultY.snr) ? 'x' : 'y';
     } else {
       winner = scanMode;
     }
     currentActiveAxis = winner;
     
-    const result = (winner === 'y') ? resY : resX;
-    
-    // 5. Update state & perform calibration logging if active
+    const result = (winner === 'y') ? analysisResultY : analysisResultX;
     const validSignal = result.snr > 3.2;
     
+    // Calibration logging
     if (isCalibrating && validSignal) {
       calPeaks.push(result.peakBin);
       const progress = Math.min(100, Math.round((calPeaks.length / CAL_SAMPLES_NEEDED) * 100));
@@ -439,20 +668,22 @@ function processFrameLoop() {
       }
     }
     
+    let percentFlicker = 0;
+    let driverQuality = "UNKNOWN";
+    let ratingClass = "rating-none";
+    
     if (validSignal) {
       if (smoothedFreq === 0) {
         smoothedFreq = result.freq;
       } else {
-        // Smooth changes
         smoothedFreq = smoothedFreq * 0.82 + result.freq * 0.18;
       }
       
-      // Map SNR to confidence percentage (3.2 SNR -> 0%, 8+ SNR -> 100%)
       const calculatedConfidence = Math.min(100, Math.round((result.snr - 3.2) * 20));
       confidence = Math.max(confidence * 0.9 + calculatedConfidence * 0.1, calculatedConfidence);
       
       hzValEl.innerText = smoothedFreq.toFixed(1);
-      statusTextEl.innerText = "STABLE FLICKER DETECTED";
+      statusTextEl.innerText = isSynthetic ? "SYNTHETIC SIGNAL ACTIVE" : "STABLE FLICKER DETECTED";
       statusTextEl.style.color = "var(--color-primary)";
       
       // Calculate Percent Flicker (Modulation Depth)
@@ -469,62 +700,19 @@ function processFrameLoop() {
       
       const meanRaw = sumRaw / span;
       const peakToPeak = maxDetrended - minDetrended;
-      const percentFlicker = meanRaw > 0 ? (peakToPeak / (2 * meanRaw)) * 100 : 0;
+      percentFlicker = meanRaw > 0 ? (peakToPeak / (2 * meanRaw)) * 100 : 0;
       
       // Classify Driver Quality based on IEEE 1789-2015
       const freq = result.freq;
-      let lowRiskLimit = 8.0;
-      let noelLimit = 3.3;
+      const classification = classifyDriverQuality(freq, percentFlicker);
+      driverQuality = classification.quality;
+      ratingClass = classification.ratingClass;
       
-      if (freq < 90) {
-        lowRiskLimit = freq * 0.025;
-        noelLimit = freq * 0.01;
-      } else {
-        lowRiskLimit = freq * 0.08;
-        noelLimit = freq * 0.033;
-      }
-      
-      let driverQuality = "UNKNOWN";
-      let ratingClass = "rating-none";
-      
-      if (percentFlicker < 3.0) {
-        driverQuality = "EXCELLENT (FLICKER-FREE)";
-        ratingClass = "rating-excellent";
-      } else if (percentFlicker <= noelLimit) {
-        driverQuality = "HIGH QUALITY (SAFE)";
-        ratingClass = "rating-excellent";
-      } else if (percentFlicker <= lowRiskLimit) {
-        driverQuality = "STANDARD QUALITY (SAFE)";
-        ratingClass = "rating-high-quality";
-      } else {
-        // Exceeds low-risk limit - low quality driver!
-        if (freq >= 90 && freq <= 130) {
-          // Double grid frequency range (typical cheap driver ripple)
-          if (percentFlicker > 30.0) {
-            driverQuality = "LOW QUALITY (HIGH AC RIPPLE)";
-            ratingClass = "rating-hazard";
-          } else {
-            driverQuality = "LOW QUALITY (MODERATE AC RIPPLE)";
-            ratingClass = "rating-low-quality";
-          }
-        } else if (freq > 130 && freq <= 500) {
-          // Low frequency PWM dimmer
-          driverQuality = "LOW QUALITY (LOW-FREQ PWM)";
-          ratingClass = "rating-hazard";
-        } else {
-          // Other frequency, but high flicker depth
-          driverQuality = "LOW QUALITY (UNSTABLE)";
-          ratingClass = "rating-low-quality";
-        }
-      }
-      
-      // Update DOM sub-metrics
       flickerPctValEl.innerText = percentFlicker.toFixed(1) + '%';
       driverQualityValEl.innerText = driverQuality;
       driverQualityValEl.className = 'sub-metric-value ' + ratingClass;
       
     } else {
-      // Decay smoothed metrics slowly
       confidence = Math.max(0, confidence - 3);
       if (confidence === 0) {
         hzValEl.innerText = "--.-";
@@ -539,7 +727,30 @@ function processFrameLoop() {
       }
     }
     
-    // Cache waveform and FFT magnitudes for diagnostic rendering
+    // Session recording sample accumulation
+    if (isRecording) {
+      const elapsed = Date.now() - recordStartTime;
+      const progress = Math.min(100, (elapsed / RECORD_DURATION_MS) * 100);
+      recProgressBar.style.width = `${progress}%`;
+      recTimerLabel.innerText = `Recording: ${(elapsed / 1000).toFixed(1)}s / 10.0s`;
+      recSamplesCount.innerText = `${recordSamples.length} samples`;
+      
+      recordSamples.push({
+        timeMs: elapsed,
+        freq: validSignal ? result.freq : 0,
+        percentFlicker: validSignal ? percentFlicker : 0,
+        snr: result.snr,
+        driverQuality: driverQuality,
+        confidence: confidence,
+        peakBin: result.peakBin
+      });
+      
+      if (elapsed >= RECORD_DURATION_MS) {
+        finishRecording();
+      }
+    }
+    
+    // Cache waveform and FFT magnitudes
     signalWaveformBuffer.set(result.waveform);
     fftMagnitudesBuffer.set(result.magnitudes);
     
@@ -554,13 +765,9 @@ function processFrameLoop() {
       confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ff1744)';
     }
     
-    // 6. Update Grid Match Status
+    // Grid Match & Overlays
     updateGridMatchTag(smoothedFreq, confidence);
-    
-    // 7. Render UI overlays on camera canvas
-    renderScannerOverlay(winner, startIdx, endIdx);
-    
-    // 8. Render diagnostics graphs
+    renderScannerOverlay(winner, startIdx, endIdx, isSynthetic);
     renderWaveformChart();
     renderSpectrumChart(result.peakBin, validSignal);
   }
@@ -569,7 +776,7 @@ function processFrameLoop() {
 }
 
 // Render scanner visualization onto preview canvas
-function renderScannerOverlay(axis, startIdx, endIdx) {
+function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
   // Keep dimensions synced
   if (previewCanvas.width !== previewCanvas.clientWidth * window.devicePixelRatio ||
       previewCanvas.height !== previewCanvas.clientHeight * window.devicePixelRatio) {
@@ -580,8 +787,12 @@ function renderScannerOverlay(axis, startIdx, endIdx) {
   const w = previewCanvas.width;
   const h = previewCanvas.height;
   
-  // Clear and draw video
-  previewCtx.drawImage(videoEl, 0, 0, w, h);
+  // Clear and draw video or synthetic canvas
+  if (isSynthetic) {
+    previewCtx.drawImage(offscreenCanvas, 0, 0, w, h);
+  } else {
+    previewCtx.drawImage(videoEl, 0, 0, w, h);
+  }
   
   const x1 = (startIdx / SIGNAL_LEN) * w;
   const x2 = (endIdx / SIGNAL_LEN) * w;
@@ -977,15 +1188,11 @@ function finishCalibration() {
   if (computedSkew >= 0.008 && computedSkew <= 0.050) {
     skewSeconds = computedSkew;
     
-    // Update Slider
-    const msValue = computedSkew * 1000;
-    skewSlider.value = msValue.toFixed(1);
-    skewValEl.innerText = msValue.toFixed(1) + ' ms';
-    
-    // Save
-    localStorage.setItem('rolling_shutter_skew', computedSkew);
+    // Save to multi-lens profile & global storage
+    saveLensProfile(activeDeviceId, activeResolution, computedSkew, activeLensName);
     
     // Populate step 3 fields
+    const msValue = computedSkew * 1000;
     calResultSkew.innerText = msValue.toFixed(2) + ' ms';
     // Line Rate = Skew / Line count (512 analysis lines)
     const lineRateUs = (computedSkew * 1000000) / SIGNAL_LEN;
@@ -1013,6 +1220,233 @@ window.addEventListener('click', (e) => {
     isCalibrating = false;
   }
 });
+
+// ==========================================
+// Signal Source (Live vs Synthetic Test Mode)
+// ==========================================
+if (testSignalSelect) {
+  testSignalSelect.addEventListener('change', () => {
+    signalSource = testSignalSelect.value;
+    smoothedFreq = 0;
+    confidence = 0;
+    if (signalSource !== 'live') {
+      if (cameraOverlayMessage) cameraOverlayMessage.style.display = 'none';
+      if (axisIndicatorEl) axisIndicatorEl.innerText = 'SYNTHETIC 512 LINES';
+    } else {
+      if (axisIndicatorEl) axisIndicatorEl.innerText = 'AUTO SCANNING';
+    }
+  });
+}
+
+// ==========================================
+// Session Recording & Data Export (10s Audit)
+// ==========================================
+function startRecording() {
+  if (isRecording) return;
+  isRecording = true;
+  recordStartTime = Date.now();
+  recordSamples = [];
+  
+  if (startRecBtn) {
+    startRecBtn.classList.add('recording');
+    startRecLabel.innerText = 'Recording Audit...';
+  }
+  if (recordStatusBadge) {
+    recordStatusBadge.innerText = 'RECORDING';
+    recordStatusBadge.style.color = 'var(--color-error)';
+  }
+  if (recProgressContainer) {
+    recProgressContainer.style.display = 'flex';
+  }
+  if (exportDownloadRow) {
+    exportDownloadRow.style.display = 'none';
+  }
+}
+
+function finishRecording() {
+  isRecording = false;
+  if (startRecBtn) {
+    startRecBtn.classList.remove('recording');
+    startRecLabel.innerText = 'Record New Sample';
+  }
+  if (recordStatusBadge) {
+    recordStatusBadge.innerText = 'COMPLETE';
+    recordStatusBadge.style.color = 'var(--color-success)';
+  }
+  if (exportDownloadRow) {
+    exportDownloadRow.style.display = 'grid';
+  }
+}
+
+if (startRecBtn) {
+  startRecBtn.addEventListener('click', () => {
+    startRecording();
+  });
+}
+
+function downloadCSV() {
+  if (recordSamples.length === 0) {
+    alert('No recording data available to export. Run a 10s audit first.');
+    return;
+  }
+  let csv = 'Timestamp_ms,Frequency_Hz,Percent_Flicker,SNR,Driver_Quality,Confidence_Pct\n';
+  recordSamples.forEach(s => {
+    csv += `${s.timeMs},${s.freq.toFixed(2)},${s.percentFlicker.toFixed(2)},${s.snr.toFixed(2)},"${s.driverQuality}",${s.confidence.toFixed(0)}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = `flickerhz-audit-${Date.now()}.csv`;
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadJSON() {
+  if (recordSamples.length === 0) {
+    alert('No recording data available to export. Run a 10s audit first.');
+    return;
+  }
+  const payload = {
+    app: 'FlickerHz',
+    version: '1.2.0',
+    exportTimestamp: new Date().toISOString(),
+    cameraLens: activeLensName,
+    sensorResolution: activeResolution,
+    calibratedSkewSeconds: skewSeconds,
+    totalSamplesRecorded: recordSamples.length,
+    finalFrequencyHz: parseFloat(hzValEl ? hzValEl.innerText : 0) || 0,
+    finalPercentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
+    driverClassification: driverQualityValEl ? driverQualityValEl.innerText : 'UNKNOWN',
+    samples: recordSamples
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = `flickerhz-audit-${Date.now()}.json`;
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+if (downloadCsvBtn) downloadCsvBtn.addEventListener('click', downloadCSV);
+if (downloadJsonBtn) downloadJsonBtn.addEventListener('click', downloadJSON);
+
+// ==========================================
+// Shareable Bulb Health Report Card (PNG Generator)
+// ==========================================
+function generateReportCard() {
+  const card = document.createElement('canvas');
+  card.width = 800;
+  card.height = 980;
+  const ctx = card.getContext('2d');
+  
+  // Outer gradient background
+  const bgGrad = ctx.createLinearGradient(0, 0, 800, 980);
+  bgGrad.addColorStop(0, '#0a0f1d');
+  bgGrad.addColorStop(1, '#050811');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, 800, 980);
+  
+  // Neon Cyber Border
+  ctx.strokeStyle = '#00f2fe';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(20, 20, 760, 940);
+  
+  // Title Header
+  ctx.fillStyle = '#00f2fe';
+  ctx.font = 'bold 28px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('FLICKERHZ LIGHT QUALITY & EYE SAFETY REPORT', 400, 70);
+  
+  ctx.fillStyle = '#8e9bb2';
+  ctx.font = '14px Inter, sans-serif';
+  ctx.fillText('IEEE 1789-2015 Optical Flicker Compliance & Driver Audit', 400, 100);
+  
+  // Grade Card Calculation
+  let grade = 'A+';
+  let gradeColor = '#00e676';
+  let gradeDesc = 'EXCELLENT: Flicker-Free Constant-Current DC Driver';
+  const qualText = driverQualityValEl ? driverQualityValEl.innerText : '';
+  
+  if (confidence < 25) {
+    grade = 'N/A';
+    gradeColor = '#8e9bb2';
+    gradeDesc = 'NO STABLE FLICKER DETECTED (Ambient / Constant DC)';
+  } else if (qualText.includes('EXCELLENT')) {
+    grade = 'A+';
+    gradeColor = '#00e676';
+    gradeDesc = 'EXCELLENT: No Observable Effect (IEEE 1789 NOEL compliant)';
+  } else if (qualText.includes('SAFE') || qualText.includes('STANDARD')) {
+    grade = 'B+';
+    gradeColor = '#00f2fe';
+    gradeDesc = 'STANDARD: Low Health Risk Boundary (IEEE 1789 compliant)';
+  } else if (qualText.includes('PWM')) {
+    grade = 'F';
+    gradeColor = '#ff1744';
+    gradeDesc = 'HAZARD: Low-Frequency PWM Stroboscopic Eye Strain Risk';
+  } else {
+    grade = 'D';
+    gradeColor = '#ffe600';
+    gradeDesc = 'POOR QUALITY: Undersized Capacitors / Severe AC Grid Ripple';
+  }
+  
+  // Draw Grade Box
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+  ctx.fillRect(50, 130, 700, 150);
+  ctx.strokeStyle = gradeColor;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(50, 130, 700, 150);
+  
+  ctx.fillStyle = gradeColor;
+  ctx.font = 'bold 70px Orbitron, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`GRADE ${grade}`, 80, 225);
+  
+  ctx.font = 'bold 15px Inter, sans-serif';
+  ctx.fillText(gradeDesc, 80, 260);
+  
+  // Metrics Row Labels
+  ctx.fillStyle = '#8e9bb2';
+  ctx.font = '12px Inter, sans-serif';
+  ctx.fillText('FLICKER FREQUENCY', 80, 320);
+  ctx.fillText('PERCENT FLICKER (DEPTH)', 320, 320);
+  ctx.fillText('AC GRID HARMONIC MATCH', 560, 320);
+  
+  // Metrics Row Values
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 26px Orbitron, monospace';
+  ctx.fillText(`${hzValEl ? hzValEl.innerText : '--'} Hz`, 80, 355);
+  ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 320, 355);
+  ctx.font = 'bold 16px Inter, sans-serif';
+  ctx.fillStyle = '#00f2fe';
+  ctx.fillText(gridMatchTagEl ? gridMatchTagEl.innerText : 'No Match', 560, 355);
+  
+  // Snapshots of Waveform and Spectrum
+  ctx.fillStyle = '#8e9bb2';
+  ctx.font = '12px Inter, sans-serif';
+  ctx.fillText('FLICKER WAVEFORM TRACE (TIME DOMAIN)', 80, 410);
+  ctx.drawImage(waveformCanvas, 50, 425, 700, 190);
+  
+  ctx.fillText('FOURIER TRANSFORM SPECTRUM (FREQUENCY DOMAIN)', 80, 645);
+  ctx.drawImage(spectrumCanvas, 50, 660, 700, 190);
+  
+  // Metadata Footer
+  ctx.fillStyle = '#8e9bb2';
+  ctx.font = '11px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  ctx.fillText(`Sensor Profile: ${skewValEl ? skewValEl.innerText : '30ms'} skew (${activeLensName}) | Audit Date: ${dateStr}`, 400, 890);
+  ctx.fillText('Verified with FlickerHz PWA | Scientific Rolling-Shutter Time Scanner', 400, 915);
+  
+  // Trigger PNG download
+  const link = document.createElement('a');
+  link.download = `flickerhz-report-card-${Date.now()}.png`;
+  link.href = card.toDataURL('image/png');
+  link.click();
+}
+
+if (exportCardBtn) exportCardBtn.addEventListener('click', generateReportCard);
 
 // ==========================================
 // Initialization & PWA Service Worker

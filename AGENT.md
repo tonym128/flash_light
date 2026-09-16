@@ -6,27 +6,39 @@ Welcome! This document outlines the technical architecture, digital signal proce
 
 ## 🏗️ Architecture Overview
 
-FlickerHz is designed as a zero-dependency, static Single Page Application (SPA) paired with a lightweight Node.js utility server.
+FlickerHz is designed as a zero-dependency, static Progressive Web Application (PWA) with client-side digital signal processing and automated unit testing.
 
 ```mermaid
 graph TD
-    A[browser: index.html] --> B[app.js: Controller]
-    B --> C[app.js: FFT / DSP Engine]
-    B --> D[app.js: Canvas Renderer]
-    B --> E[sw.js: PWA Offline Cache]
-    F[server.js: Node SSL Server] -.->|Serves HTTPS over local network| A
+    A[browser: index.html] --> B[app.js: Controller & UI Orchestrator]
+    B --> C[dsp.js: Radix-2 FFT / Detrending / IEEE 1789]
+    B --> D[app.js: Canvas Renderers - Oscilloscope / Spectrum / Scanner]
+    B --> E[app.js: Audit Recorder & PNG Report Card Generator]
+    B --> F[sw.js: PWA Service Worker Cache v1.2.0]
+    G[test/dsp.test.js: Node Unit Tests] --> C
+    H[server.js: Node SSL Dev Server] -.->|Serves HTTPS over local Wi-Fi| A
+    I[Cloudflare Pages / Vercel] -.->|Hosts public HTTPS with camera headers| A
 ```
 
 ### Key Components
-1.  **Frontend Layout ([index.html](file:///home/tonym/Projects/flashy_light/index.html))**: Structure for dashboard tabs, sliders, select dropdowns, responsive grids, and standard HTML5 `<canvas>` elements for all drawings.
-2.  **Styles ([styles.css](file:///home/tonym/Projects/flashy_light/styles.css))**: CSS variables, responsive layout breakpoints, mobile touch-friendly inputs, and visual effects (e.g. glassmorphism backdrop-blur filters, glows, scanner animations).
-3.  **App Controller & DSP ([app.js](file:///home/tonym/Projects/flashy_light/app.js))**:
-    -   Implements a Radix-2 Cooley-Tukey FFT.
-    -   Averages camera rows/columns to extract raw spatial signals.
-    -   Performs real-time detrending, windowing, padding, peak finding, and parabolic sub-bin frequency interpolation.
-    -   Renders custom high-performance oscilloscope and spectrum graphs directly onto `<canvas>` at 60fps.
-4.  **Local Dev Server ([server.js](file:///home/tonym/Projects/flashy_light/server.js))**: Uses native Node.js HTTPS and HTTP modules. Dynamically spawns `openssl` to generate local self-signed certificates. Output IP addresses to facilitate quick Wi-Fi connections from external mobile devices.
-5.  **Offline Service Worker ([sw.js](file:///home/tonym/Projects/flashy_light/sw.js))**: Static caching of index.html, styles.css, app.js, manifest.json, and icon.svg for offline PWA startup.
+1.  **Frontend Layout ([index.html](file:///home/tonym/Projects/flashy_light/index.html))**: Accessible interface containing live camera view, Exposure HUD, sensor profile badges, synthetic test signal selector, tabbed waveform/spectrum graphs, 10-second audit recording card, and calibration modal.
+2.  **Styles ([styles.css](file:///home/tonym/Projects/flashy_light/styles.css))**: Mobile-first responsive styling with high-contrast HUD badges, pulsating status indicators, and glassmorphism styling.
+3.  **DSP Core Engine ([dsp.js](file:///home/tonym/Projects/flashy_light/dsp.js))**:
+    -   Zero-allocation Radix-2 Cooley-Tukey FFT implementation.
+    -   In-place $O(n)$ sliding window detrending filter preserving 50/60/100/120Hz oscillations while stripping DC spatial illumination.
+    -   Parabolic sub-bin peak interpolation ($<0.1\text{ Hz}$ resolution).
+    -   Modulation depth (Percent Flicker) calculator.
+    -   IEEE 1789-2015 driver hazard classification engine.
+    -   Universal module export (runs identically in browser and Node.js test environment).
+4.  **Application Controller ([app.js](file:///home/tonym/Projects/flashy_light/app.js))**:
+    -   Zero-GC pre-allocated TypedArray scratch buffers (`colAverages`, `rowAverages`, `windowedScratch`, `realBufferScratch`).
+    -   MediaTrack advanced constraints negotiator (shutter time, continuous focus lock).
+    -   Synthetic signal generator for offline hardware-independent verification.
+    -   Multi-camera lens profile persistence in `localStorage`.
+    -   10-second rolling audit session recorder, CSV and JSON exporters, and 2D canvas PNG Report Card renderer.
+5.  **Automated Unit Tests ([test/dsp.test.js](file:///home/tonym/Projects/flashy_light/test/dsp.test.js))**: Native Node test suite verifying FFT transformations, parabolic peak accuracy, filter frequency responses, and IEEE 1789 boundaries.
+6.  **Production Deployment Configs ([vercel.json](file:///home/tonym/Projects/flashy_light/vercel.json), [_headers](file:///home/tonym/Projects/flashy_light/_headers), [DEPLOYMENT.md](file:///home/tonym/Projects/flashy_light/DEPLOYMENT.md))**: Ready-to-deploy configuration with `Permissions-Policy: camera=(self)` and service worker cache headers.
+7.  **Local Dev Server ([server.js](file:///home/tonym/Projects/flashy_light/server.js))**: Spawns `openssl` for self-signed development certificates across local Wi-Fi.
 
 ---
 
