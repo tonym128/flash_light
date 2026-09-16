@@ -42,6 +42,14 @@ const sensorProfileInfoEl = document.getElementById('sensor-profile-info');
 const testSignalSelect = document.getElementById('test-signal-select');
 const roiSelect = document.getElementById('roi-select');
 
+// Clinical & Ergonomic Health Feedback Elements
+const healthFeedbackCard = document.getElementById('health-feedback-card');
+const feedbackHeadline = document.getElementById('feedback-headline');
+const feedbackRiskBadge = document.getElementById('feedback-risk-badge');
+const feedbackSummary = document.getElementById('feedback-summary');
+const feedbackComparison = document.getElementById('feedback-comparison');
+const feedbackRecommendation = document.getElementById('feedback-recommendation');
+
 // Session Recorder DOM elements
 const startRecBtn = document.getElementById('start-rec-btn');
 const startRecLabel = document.getElementById('start-rec-label');
@@ -523,6 +531,24 @@ function updateMetricsDisplay(data) {
         shutterHudEl.style.display = 'none';
       }
     }
+
+    // Real-Time Health, Neurological & Ergonomic Feedback
+    if (healthFeedbackCard && typeof getHealthFeedback === 'function') {
+      const fb = getHealthFeedback({ freq: smoothedFreq, percentFlicker, svm, thd });
+      if (fb) {
+        healthFeedbackCard.style.display = 'block';
+        healthFeedbackCard.className = 'health-feedback-card ' + fb.badgeClass;
+        if (feedbackHeadline) feedbackHeadline.innerText = fb.headline;
+        if (feedbackRiskBadge) {
+          feedbackRiskBadge.innerText = fb.riskLevel;
+          const riskColorClass = (fb.riskLevel === 'NONE' || fb.riskLevel === 'LOW') ? 'print-pass' : (fb.riskLevel === 'MODERATE' ? 'badge-caution' : 'print-fail');
+          feedbackRiskBadge.className = 'badge-tag-sm ' + riskColorClass;
+        }
+        if (feedbackSummary) feedbackSummary.innerText = fb.summary;
+        if (feedbackComparison) feedbackComparison.innerText = fb.comparison;
+        if (feedbackRecommendation) feedbackRecommendation.innerText = fb.recommendation;
+      }
+    }
   } else {
     confidence = Math.max(0, confidence * 0.92);
     if (confidence < 10) {
@@ -539,6 +565,7 @@ function updateMetricsDisplay(data) {
       driverQualityValEl.innerText = "UNKNOWN";
       driverQualityValEl.className = 'sub-metric-value rating-none';
       if (shutterHudEl) shutterHudEl.style.display = 'none';
+      if (healthFeedbackCard) healthFeedbackCard.style.display = 'none';
     }
   }
 
@@ -1920,6 +1947,14 @@ function downloadJSON() {
   const audit = calculateAuditStability(recordSamples);
   const auditHash = generateAuditChecksum(recordSamples);
   const svm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
+  const currentHz = parseFloat(hzValEl ? hzValEl.innerText : 0) || 0;
+  const currentFlickerPct = parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0;
+  const healthFeedback = typeof getHealthFeedback === 'function' ? getHealthFeedback({
+    freq: currentHz,
+    percentFlicker: currentFlickerPct,
+    svm: svm,
+    confidence: confidence
+  }) : null;
   
   const payload = {
     app: 'FlickerHz',
@@ -1930,13 +1965,14 @@ function downloadJSON() {
     sensorResolution: activeResolution,
     calibratedSkewSeconds: skewSeconds,
     totalSamplesRecorded: recordSamples.length,
-    finalFrequencyHz: parseFloat(hzValEl ? hzValEl.innerText : 0) || 0,
-    finalPercentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
+    finalFrequencyHz: currentHz,
+    finalPercentFlicker: currentFlickerPct,
     finalFlickerIndex: parseFloat(flickerIndexValEl ? flickerIndexValEl.innerText : 0) || 0,
     finalTHD: parseFloat(thdValEl ? thdValEl.innerText : 0) || 0,
     finalSVM: svm,
     isEcodesignCompliant: svm <= 0.40,
     driverClassification: driverQualityValEl ? driverQualityValEl.innerText : 'UNKNOWN',
+    clinicalHealthFeedback: healthFeedback,
     auditStability: audit,
     samples: recordSamples
   };
@@ -1958,30 +1994,30 @@ if (downloadJsonBtn) downloadJsonBtn.addEventListener('click', downloadJSON);
 function generateReportCard() {
   const card = document.createElement('canvas');
   card.width = 840;
-  card.height = 1080;
+  card.height = 1140;
   const ctx = card.getContext('2d');
   
   // Outer gradient background
-  const bgGrad = ctx.createLinearGradient(0, 0, 840, 1080);
+  const bgGrad = ctx.createLinearGradient(0, 0, 840, 1140);
   bgGrad.addColorStop(0, '#0a0f1d');
   bgGrad.addColorStop(1, '#050811');
   ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, 840, 1080);
+  ctx.fillRect(0, 0, 840, 1140);
   
   // Neon Cyber Border
   ctx.strokeStyle = '#00f2fe';
   ctx.lineWidth = 3;
-  ctx.strokeRect(20, 20, 800, 1040);
+  ctx.strokeRect(20, 20, 800, 1100);
   
   // Title Header
   ctx.fillStyle = '#00f2fe';
   ctx.font = 'bold 28px Inter, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('FLICKERHZ LIGHT QUALITY & EYE SAFETY REPORT', 420, 70);
+  ctx.fillText('FLICKERHZ LIGHT QUALITY & EYE SAFETY REPORT', 420, 65);
   
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '14px Inter, sans-serif';
-  ctx.fillText('IEEE 1789-2015, IES RP-16-10 & EU 2019/2020 Compliance Certificate', 420, 100);
+  ctx.fillText('IEEE 1789-2015, IES RP-16-10 & EU 2019/2020 Compliance Certificate', 420, 92);
   
   // Audit stability computation
   const audit = calculateAuditStability(recordSamples.length > 0 ? recordSamples : [{
@@ -1994,6 +2030,16 @@ function generateReportCard() {
   }]);
   const auditHash = generateAuditChecksum(recordSamples.length > 0 ? recordSamples : [{ timeMs: 0, freq: 100, percentFlicker: 0, flickerIndex: 0, thd: 0 }]);
   const curSvm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
+  const curFreq = parseFloat(hzValEl ? hzValEl.innerText : 0) || 0;
+  const curFlickerPct = parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0;
+
+  // Clinical health feedback
+  const health = typeof getHealthFeedback === 'function' ? getHealthFeedback({
+    freq: curFreq,
+    percentFlicker: curFlickerPct,
+    svm: curSvm,
+    confidence: confidence
+  }) : null;
   
   // Grade Card Calculation
   let grade = 'A+';
@@ -2025,79 +2071,103 @@ function generateReportCard() {
   
   // Draw Grade Box
   ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-  ctx.fillRect(50, 130, 740, 155);
+  ctx.fillRect(50, 115, 740, 140);
   ctx.strokeStyle = gradeColor;
   ctx.lineWidth = 2;
-  ctx.strokeRect(50, 130, 740, 155);
+  ctx.strokeRect(50, 115, 740, 140);
   
   ctx.fillStyle = gradeColor;
-  ctx.font = 'bold 68px Orbitron, monospace';
+  ctx.font = 'bold 62px Orbitron, monospace';
   ctx.textAlign = 'left';
-  ctx.fillText(`GRADE ${grade}`, 75, 220);
+  ctx.fillText(`GRADE ${grade}`, 75, 195);
   
   // Lab certification stamp
   if (audit.isCertifiedLabGrade) {
     ctx.fillStyle = '#00f2fe';
     ctx.font = 'bold 13px Inter, sans-serif';
-    ctx.fillText('★ CLASS A LAB CERTIFIED AUDIT ★', 430, 175);
+    ctx.fillText('★ CLASS A LAB CERTIFIED AUDIT ★', 430, 160);
     ctx.fillStyle = '#8e9bb2';
     ctx.font = '12px Inter, sans-serif';
-    ctx.fillText(`Freq Jitter: ±${audit.stdDevFreq} Hz | Avg SNR: ${audit.meanSNR} dB`, 430, 200);
+    ctx.fillText(`Freq Jitter: ±${audit.stdDevFreq} Hz | Avg SNR: ${audit.meanSNR} dB`, 430, 185);
   }
   
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 15px Inter, sans-serif';
-  ctx.fillText(gradeDesc, 75, 260);
+  ctx.font = 'bold 14px Inter, sans-serif';
+  ctx.fillText(gradeDesc, 75, 235);
   
   // Metrics Grid Row 1 (5 columns)
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '10px Inter, sans-serif';
-  ctx.fillText('FREQUENCY', 75, 320);
-  ctx.fillText('MODULATION', 225, 320);
-  ctx.fillText('FLICKER INDEX', 375, 320);
-  ctx.fillText('WAVEFORM THD', 525, 320);
-  ctx.fillText('EU ECODESIGN (SVM)', 675, 320);
+  ctx.fillText('FREQUENCY', 75, 280);
+  ctx.fillText('MODULATION', 225, 280);
+  ctx.fillText('FLICKER INDEX', 375, 280);
+  ctx.fillText('WAVEFORM THD', 525, 280);
+  ctx.fillText('EU ECODESIGN (SVM)', 675, 280);
   
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px Orbitron, monospace';
-  ctx.fillText(`${hzValEl ? hzValEl.innerText : '--'} Hz`, 75, 350);
-  ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 225, 350);
-  ctx.fillText(flickerIndexValEl ? flickerIndexValEl.innerText : '-.---', 375, 350);
-  ctx.fillText(thdValEl ? thdValEl.innerText : '--.-%', 525, 350);
+  ctx.font = 'bold 18px Orbitron, monospace';
+  ctx.fillText(`${curFreq > 0 ? curFreq.toFixed(1) : '--'} Hz`, 75, 305);
+  ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 225, 305);
+  ctx.fillText(flickerIndexValEl ? flickerIndexValEl.innerText : '-.---', 375, 305);
+  ctx.fillText(thdValEl ? thdValEl.innerText : '--.-%', 525, 305);
   ctx.fillStyle = curSvm <= 0.40 ? '#00e676' : '#ff1744';
-  ctx.fillText(curSvm.toFixed(2), 675, 350);
+  ctx.fillText(curSvm.toFixed(2), 675, 305);
   
   // Metrics Grid Row 2
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '11px Inter, sans-serif';
-  ctx.fillText('AC GRID / STROBE MATCH', 75, 395);
-  ctx.fillText('AUDIT STABILITY RATING', 350, 395);
-  ctx.fillText('CRYPTOGRAPHIC AUDIT HASH', 580, 395);
+  ctx.fillText('AC GRID / STROBE MATCH', 75, 340);
+  ctx.fillText('AUDIT STABILITY RATING', 350, 340);
+  ctx.fillText('CRYPTOGRAPHIC AUDIT HASH', 580, 340);
   
-  ctx.font = 'bold 14px Inter, sans-serif';
+  ctx.font = 'bold 13px Inter, sans-serif';
   ctx.fillStyle = '#00f2fe';
-  ctx.fillText(gridMatchTagEl ? gridMatchTagEl.innerText : 'No Match', 75, 420);
-  ctx.fillText(audit.stabilityGrade, 350, 420);
-  ctx.font = '12px Orbitron, monospace';
+  ctx.fillText(gridMatchTagEl ? gridMatchTagEl.innerText : 'No Match', 75, 362);
+  ctx.fillText(audit.stabilityGrade, 350, 362);
+  ctx.font = '11px Orbitron, monospace';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(`sha256-${auditHash.substring(0, 12)}`, 580, 420);
+  ctx.fillText(`sha256-${auditHash.substring(0, 12)}`, 580, 362);
   
+  // Clinical Health & Incandescent Comparison Card
+  if (health) {
+    const healthBorderColor = health.riskLevel === 'NONE' ? '#00e676' :
+                              health.riskLevel === 'LOW' ? '#00f2fe' :
+                              health.riskLevel === 'MODERATE' ? '#ffe600' : '#ff1744';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+    ctx.fillRect(50, 385, 740, 105);
+    ctx.strokeStyle = healthBorderColor;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(50, 385, 740, 105);
+    
+    ctx.fillStyle = healthBorderColor;
+    ctx.font = 'bold 13px Inter, sans-serif';
+    ctx.fillText(`CLINICAL EYE SAFETY: ${health.headline.toUpperCase()} [${health.riskLevel} RISK]`, 65, 408);
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '11px Inter, sans-serif';
+    ctx.fillText(health.summary, 65, 430);
+    
+    ctx.fillStyle = '#8e9bb2';
+    ctx.fillText(`Incandescent Benchmark: ${health.incandescentComparison}`, 65, 452);
+    ctx.fillText(`Ergonomic Advice: ${health.recommendation}`, 65, 474);
+  }
+
   // Snapshots of Waveform and Spectrum
   ctx.fillStyle = '#8e9bb2';
-  ctx.font = '12px Inter, sans-serif';
-  ctx.fillText('FLICKER WAVEFORM TRACE (TIME DOMAIN)', 75, 465);
-  ctx.drawImage(waveformCanvas, 50, 480, 740, 200);
+  ctx.font = '11px Inter, sans-serif';
+  ctx.fillText('FLICKER WAVEFORM TRACE (TIME DOMAIN)', 75, 515);
+  ctx.drawImage(waveformCanvas, 50, 525, 740, 180);
   
-  ctx.fillText('FOURIER TRANSFORM SPECTRUM (FREQUENCY DOMAIN)', 75, 715);
-  ctx.drawImage(spectrumCanvas, 50, 730, 740, 200);
+  ctx.fillText('FOURIER TRANSFORM SPECTRUM (FREQUENCY DOMAIN)', 75, 730);
+  ctx.drawImage(spectrumCanvas, 50, 740, 740, 180);
   
   // Metadata Footer
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '11px Inter, sans-serif';
   ctx.textAlign = 'center';
   const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-  ctx.fillText(`Sensor Profile: ${skewValEl ? skewValEl.innerText : '30ms'} skew (${activeLensName}) | Audit Date: ${dateStr}`, 420, 975);
-  ctx.fillText('Verified with FlickerHz PWA | Scientific Rolling-Shutter Time Scanner', 420, 1000);
+  ctx.fillText(`Sensor Profile: ${skewValEl ? skewValEl.innerText : '30ms'} skew (${activeLensName}) | Audit Date: ${dateStr}`, 420, 960);
+  ctx.fillText('Verified with FlickerHz PWA | Scientific Rolling-Shutter Time Scanner', 420, 985);
   
   // Trigger PNG download
   const link = document.createElement('a');

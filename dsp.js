@@ -476,6 +476,83 @@ function generateAuditChecksum(samples) {
   return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
 }
 
+// ==========================================
+// Clinical & Ergonomic Health Feedback Engine
+// Evaluates neurological headache risk, comparison with
+// traditional incandescent bulbs, and workspace suitability.
+// ==========================================
+function getHealthFeedback(metrics) {
+  if (!metrics) return null;
+  const freq = metrics.freq || 0;
+  const percentFlicker = metrics.percentFlicker || 0;
+  const svm = metrics.svm || 0;
+  const thd = metrics.thd || 0;
+
+  if (freq === 0 || percentFlicker < 3.0) {
+    return {
+      riskLevel: 'NONE',
+      headline: '🟢 Zero Headache Risk (Pure DC)',
+      summary: 'Constant-current DC driver delivers smooth photons with zero subconscious retinal stimulation.',
+      comparison: 'Superior to traditional tungsten incandescent bulbs (which fluctuate ~8–10% on AC mains).',
+      recommendation: 'Ideal for reading desks, computer monitors, study areas, and nurseries.',
+      badgeClass: 'feedback-safe'
+    };
+  }
+
+  if (percentFlicker <= 8.0 && svm <= 0.40) {
+    return {
+      riskLevel: 'LOW',
+      headline: '🟢 Safe (Classic Incandescent Equivalent)',
+      summary: 'Mild, low-depth ripple within IEEE 1789 NOEL limits. Effortlessly tolerated by the human visual system.',
+      comparison: 'Directly equivalent to a traditional 60W tungsten incandescent bulb (~6–10% thermal ripple).',
+      recommendation: 'Comfortable for living rooms, dining, ambient lighting, and general residential use.',
+      badgeClass: 'feedback-incandescent'
+    };
+  }
+
+  if (percentFlicker <= 25.0 && svm <= 0.90) {
+    return {
+      riskLevel: 'MODERATE',
+      headline: '🟡 Moderate Eyestrain Warning',
+      summary: 'Mains AC ripple exceeds healthy desk standards. While invisible when looking directly, micro-saccadic eye movements trigger neurological strain.',
+      comparison: 'Comparable to old magnetic fluorescent office tubes. Frequent cause of afternoon reading fatigue.',
+      recommendation: 'Avoid for focused study, reading, or screen backlighting. Acceptable for hallways and outdoor fixtures.',
+      badgeClass: 'feedback-caution'
+    };
+  }
+
+  if (freq >= 90 && freq <= 130) {
+    return {
+      riskLevel: 'HIGH',
+      headline: '🔴 High Migraine & Flicker Hazard',
+      summary: `Severe AC ripple with ${percentFlicker.toFixed(0)}% modulation. The driver shuts completely OFF 100 or 120 times every second.`,
+      comparison: 'Far worse than any incandescent bulb ever made. The LED lacks an electrolytic smoothing capacitor.',
+      recommendation: 'Replace immediately in work and living areas. Severe risk of migraines, eye strain, and stroboscopic illusions around tools.',
+      badgeClass: 'feedback-hazard'
+    };
+  }
+
+  if (freq > 130 && freq <= 500) {
+    return {
+      riskLevel: 'HIGH',
+      headline: '🔴 Harsh Low-Frequency PWM Strobe',
+      summary: `Coarse square-wave PWM dimming (${freq.toFixed(0)} Hz). Produces heavy phantom array ghost trails during eye movements.`,
+      comparison: 'Worse than traditional lighting; typical of budget dimmers or cheap RGB holiday strings.',
+      recommendation: 'Do not use for sustained tasks. Set dimmer to 100% or upgrade to a high-frequency flicker-free dimmer.',
+      badgeClass: 'feedback-hazard'
+    };
+  }
+
+  return {
+    riskLevel: 'MODERATE',
+    headline: '⚠️ Irregular Light Oscillation',
+    summary: 'Non-standard waveform detected. May be caused by dimmer incompatibility or unstable driver circuitry.',
+    comparison: 'Irregular output with harmonic distortion.',
+    recommendation: 'Check dimmer compatibility and driver wiring.',
+    badgeClass: 'feedback-caution'
+  };
+}
+
 // Universal Module Export (Browser Window + CommonJS / Node.js)
 if (typeof module !== 'undefined' && module.exports) {
   const nodeCrypto = require('crypto');
@@ -491,7 +568,8 @@ if (typeof module !== 'undefined' && module.exports) {
     linearizeLuminance,
     calculateSVM,
     generateAuditChecksum,
-    getCieStroboscopicThreshold
+    getCieStroboscopicThreshold,
+    getHealthFeedback
   };
 } else if (typeof self !== 'undefined') {
   self.FFT = FFT;
@@ -506,4 +584,5 @@ if (typeof module !== 'undefined' && module.exports) {
   self.calculateSVM = calculateSVM;
   self.generateAuditChecksum = generateAuditChecksum;
   self.getCieStroboscopicThreshold = getCieStroboscopicThreshold;
+  self.getHealthFeedback = getHealthFeedback;
 }

@@ -10,7 +10,8 @@ const {
   classifyDriverQuality,
   linearizeLuminance,
   calculateSVM,
-  generateAuditChecksum
+  generateAuditChecksum,
+  getHealthFeedback
 } = require('../dsp.js');
 
 console.log('Running FlashyLight DSP Unit Test Suite...\n');
@@ -474,5 +475,37 @@ test('calculateSVM corrects stroboscopic visibility when ambient light is tared'
   assert(corrected.svm > uncorrected.svm, `Corrected SVM ${corrected.svm} must be higher than uncorrected ${uncorrected.svm} when ambient DC is removed`);
 });
 
+// ==========================================
+// 13. Clinical & Ergonomic Health Feedback
+// ==========================================
+test('getHealthFeedback identifies zero-headache DC lighting', () => {
+  const fb = getHealthFeedback({ freq: 100, percentFlicker: 1.2, svm: 0.05, thd: 0.5 });
+  assert.strictEqual(fb.riskLevel, 'NONE');
+  assert(fb.headline.includes('Zero Headache Risk'));
+  assert(fb.comparison.includes('incandescent'));
+});
+
+test('getHealthFeedback identifies classic incandescent equivalent lighting', () => {
+  const fb = getHealthFeedback({ freq: 100, percentFlicker: 6.5, svm: 0.25, thd: 1.2 });
+  assert.strictEqual(fb.riskLevel, 'LOW');
+  assert(fb.headline.includes('Incandescent Equivalent'));
+  assert(fb.comparison.includes('60W tungsten'));
+});
+
+test('getHealthFeedback flags fluorescent-tier eyestrain risk', () => {
+  const fb = getHealthFeedback({ freq: 100, percentFlicker: 18.0, svm: 0.70, thd: 8.0 });
+  assert.strictEqual(fb.riskLevel, 'MODERATE');
+  assert(fb.headline.includes('Eyestrain Warning'));
+  assert(fb.comparison.includes('fluorescent'));
+});
+
+test('getHealthFeedback flags severe AC ripple as high migraine hazard', () => {
+  const fb = getHealthFeedback({ freq: 100, percentFlicker: 45.0, svm: 1.45, thd: 25.0 });
+  assert.strictEqual(fb.riskLevel, 'HIGH');
+  assert(fb.headline.includes('High Migraine'));
+  assert(fb.comparison.includes('Far worse than any incandescent'));
+});
+
 console.log(`\nAll ${testsPassed} DSP unit tests passed successfully!\n`);
+
 

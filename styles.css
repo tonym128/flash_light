@@ -382,6 +382,89 @@ body {
   border-color: rgba(255, 23, 68, 0.3);
 }
 
+/* Real-Time Health & Diagnostic Feedback Card */
+.health-feedback-card {
+  margin-top: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: left;
+  transition: all 0.3s ease;
+}
+
+.health-feedback-card.feedback-safe {
+  border-color: rgba(0, 230, 118, 0.4);
+  background: rgba(0, 230, 118, 0.04);
+}
+
+.health-feedback-card.feedback-incandescent {
+  border-color: rgba(0, 242, 254, 0.4);
+  background: rgba(0, 242, 254, 0.04);
+}
+
+.health-feedback-card.feedback-caution {
+  border-color: rgba(255, 230, 0, 0.4);
+  background: rgba(255, 230, 0, 0.04);
+}
+
+.health-feedback-card.feedback-hazard {
+  border-color: rgba(255, 23, 68, 0.5);
+  background: rgba(255, 23, 68, 0.06);
+}
+
+.feedback-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.feedback-headline {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: 0.3px;
+}
+
+.feedback-desc {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  line-height: 1.4;
+  margin: 0 0 10px 0;
+}
+
+.feedback-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 600px) {
+  .feedback-details-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.feedback-detail-box .detail-label {
+  display: block;
+  font-weight: 600;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.feedback-detail-box .detail-val {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
 /* Camera Preview Card */
 .preview-card {
   display: flex;
