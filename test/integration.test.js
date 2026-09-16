@@ -73,6 +73,10 @@ test('dsp.js and app.js execute sequentially in shared global scope without re-d
         fill: () => {},
         arc: () => {},
         closePath: () => {},
+        strokeRect: () => {},
+        fillText: () => {},
+        measureText: () => ({ width: 50 }),
+        clearRect: () => {},
         setLineDash: () => {},
         createLinearGradient: () => ({ addColorStop: () => {} }),
         drawImage: () => {},
@@ -91,7 +95,9 @@ test('dsp.js and app.js execute sequentially in shared global scope without re-d
       clientWidth: 640,
       clientHeight: 480,
       width: 640,
-      height: 480
+      height: 480,
+      toDataURL: () => 'data:image/png;base64,mock',
+      click: () => {}
     };
   }
 
@@ -111,6 +117,7 @@ test('dsp.js and app.js execute sequentially in shared global scope without re-d
     Date,
     JSON,
     Promise,
+    alert: () => {},
     URL: {
       createObjectURL: () => 'blob:mock',
       revokeObjectURL: () => {}
@@ -171,6 +178,69 @@ test('dsp.js and app.js execute sequentially in shared global scope without re-d
 
   assert.strictEqual(typeof sandbox.startRecording, 'function', 'app.js functions should be initialized');
   assert.strictEqual(typeof sandbox.loadLensProfile, 'function', 'loadLensProfile should be defined');
+
+  // 3. Runtime Verification: verify updateMetricsDisplay executes without throwing ReferenceError
+  sandbox.updateMetricsDisplay({
+    validSignal: true,
+    freq: 100,
+    snr: 8.5,
+    percentFlicker: 5.2,
+    flickerIndex: 0.015,
+    thd: 2.1,
+    svm: 0.18,
+    svmRatingClass: 'rating-safe',
+    driverQuality: 'EXCELLENT',
+    ratingClass: 'rating-safe',
+    isSynthetic: false,
+    meanRoiLuminance: 120
+  });
+
+  sandbox.updateMetricsDisplay({
+    validSignal: false,
+    freq: 0,
+    snr: 1.0,
+    percentFlicker: 0,
+    flickerIndex: 0,
+    thd: 0,
+    svm: 0,
+    svmRatingClass: 'rating-none',
+    driverQuality: 'UNKNOWN',
+    ratingClass: 'rating-none',
+    isSynthetic: false,
+    meanRoiLuminance: 20
+  });
+
+  // 4. Runtime Verification: verify handleWorkerMessage executes cleanly without ReferenceError
+  sandbox.handleWorkerMessage({
+    data: {
+      type: 'FRAME_RESULT',
+      winner: 'y',
+      validSignal: true,
+      freq: 100,
+      snr: 10.0,
+      peakBin: 24,
+      peakMag: 150,
+      percentFlicker: 4.5,
+      flickerIndex: 0.012,
+      thd: 1.8,
+      svm: 0.15,
+      driverQuality: 'EXCELLENT',
+      ratingClass: 'rating-safe',
+      waveform: new Float32Array(512),
+      magnitudes: new Float32Array(2048),
+      rowAverages: new Float32Array(512),
+      colAverages: new Float32Array(512)
+    }
+  });
+
+  // 5. Runtime Verification: verify processFrameLoop executes in both Worker & Inline modes
+  sandbox.processFrameLoop();
+  sandbox.dspWorker = null; // simulate main-thread inline fallback
+  sandbox.processFrameLoop();
+
+  // 6. Runtime Verification: verify generateReportCard and downloadJSON execute cleanly
+  sandbox.generateReportCard();
+  sandbox.downloadJSON();
 });
 
 test('dsp.worker.js loads dsp.js without error in worker context', () => {

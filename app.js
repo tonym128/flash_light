@@ -136,6 +136,8 @@ let isFrozen = false;
 let skewSeconds = 0.030; // default rolling shutter skew (30ms)
 let scanMode = 'auto'; // 'auto', 'x', 'y'
 let currentActiveAxis = 'y'; // 'y' = horizontal bands (vertical scanning), 'x' = vertical bands (horizontal scanning)
+let latestPeakBin = 0;
+let latestValidSignal = false;
 let roiMode = 'auto'; // 'auto' (bright bulb core), 'full' (full frame)
 let currentRoi = { x: 128, y: 128, w: 256, h: 256 };
 
@@ -420,6 +422,8 @@ function handleWorkerMessage(e) {
   if (d.colAverages) colAverages.set(d.colAverages);
 
   currentActiveAxis = d.winner;
+  latestPeakBin = d.peakBin || 0;
+  latestValidSignal = !!d.validSignal;
   const validSignal = d.validSignal;
   const freq = d.freq;
   const snr = d.snr;
@@ -569,8 +573,8 @@ function updateMetricsDisplay(data) {
     }
   }
 
-  confidenceBar.style.width = confidence + '%';
-  confidencePct.innerText = Math.round(confidence) + '%';
+  if (confidenceBarEl) confidenceBarEl.style.width = confidence + '%';
+  if (confidencePctEl) confidencePctEl.innerText = Math.round(confidence) + '%';
   updateGridMatchTag(smoothedFreq, confidence);
 }
 
@@ -1050,6 +1054,8 @@ function processFrameLoop() {
       
       const result = (winner === 'y') ? analysisResultY : analysisResultX;
       const validSignal = result.snr > 3.2;
+      latestPeakBin = result.peakBin;
+      latestValidSignal = validSignal;
       
       let percentFlicker = 0;
       let flickerIndex = 0;
@@ -1084,6 +1090,20 @@ function processFrameLoop() {
           calProgressBar.style.width = progress + '%';
           calStatusText.innerText = `Capturing signal... ${calPeaks.length} / ${CAL_SAMPLES_NEEDED} samples`;
           if (calPeaks.length >= CAL_SAMPLES_NEEDED) finishCalibration();
+        }
+
+        if (isRecording) {
+          recordSamples.push({
+            timeMs: Date.now() - recordStartTime,
+            freq: result.freq,
+            percentFlicker,
+            flickerIndex,
+            thd,
+            svm,
+            snr: result.snr,
+            driverQuality,
+            confidence
+          });
         }
       }
       
@@ -1120,19 +1140,21 @@ function processFrameLoop() {
         finishRecording();
       }
     }
-    if (confidence > 75) {
-      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #00e676)';
-    } else if (confidence > 35) {
-      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ffe600)';
-    } else {
-      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ff1744)';
+    if (confidenceBarEl) {
+      if (confidence > 75) {
+        confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #00e676)';
+      } else if (confidence > 35) {
+        confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ffe600)';
+      } else {
+        confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ff1744)';
+      }
     }
     
     // Grid Match & Overlays
     updateGridMatchTag(smoothedFreq, confidence);
-    renderScannerOverlay(winner, startIdx, endIdx, isSynthetic);
+    renderScannerOverlay(currentActiveAxis, 0, SIGNAL_LEN, signalSource !== 'live');
     renderWaveformChart();
-    renderSpectrumChart(result.peakBin, validSignal);
+    renderSpectrumChart(latestPeakBin, latestValidSignal);
   }
   
   animationFrameId = requestAnimationFrame(processFrameLoop);
@@ -1199,11 +1221,15 @@ function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
     previewCtx.shadowBlur = 0;
     
     // Update scanner laser CSS classes
-    laserLine.className = 'scan-laser-line vertical-scan';
-    laserLine.style.display = 'none'; // handled on canvas
+    if (laserLine) {
+      laserLine.className = 'scan-laser-line vertical-scan';
+      laserLine.style.display = 'none'; // handled on canvas
+    }
   } else {
-    axisIndicatorEl.innerText = 'VERTICAL BANDS';
-    axisIndicatorEl.style.color = 'var(--color-secondary)';
+    if (axisIndicatorEl) {
+      axisIndicatorEl.innerText = 'VERTICAL BANDS';
+      axisIndicatorEl.style.color = 'var(--color-secondary)';
+    }
     
     // Draw rows boundary lines
     previewCtx.strokeStyle = 'rgba(255, 230, 0, 0.2)';
@@ -1228,8 +1254,10 @@ function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
     previewCtx.stroke();
     previewCtx.shadowBlur = 0;
     
-    laserLine.className = 'scan-laser-line horizontal-scan';
-    laserLine.style.display = 'none'; // handled on canvas
+    if (laserLine) {
+      laserLine.className = 'scan-laser-line horizontal-scan';
+      laserLine.style.display = 'none'; // handled on canvas
+    }
   }
 }
 
