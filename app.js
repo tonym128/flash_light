@@ -661,40 +661,44 @@ initWebWorker();
 // ==========================================
 
 async function initCamera() {
-  cameraOverlayMessage.style.display = 'flex';
-  cameraOverlayMessage.innerHTML = '<div class="spinner"></div><p>Requesting camera access...</p>';
+  if (cameraOverlayMessage) {
+    cameraOverlayMessage.style.display = 'flex';
+    cameraOverlayMessage.innerHTML = '<div class="spinner"></div><p>Requesting camera access...</p>';
+  }
   
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    // 1. Start streaming with ideal environment (back) camera first to trigger permission prompt
+    await startStreaming();
     
-    // Populate select dropdown
-    cameraSelect.innerHTML = '';
-    if (videoDevices.length === 0) {
-      cameraOverlayMessage.innerHTML = '<p style="color:var(--color-error)">No camera found on this device.</p>';
-      return;
+    // 2. Once permissions are established, enumerate devices with full labels
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+      
+      if (cameraSelect && videoDevices.length > 0) {
+        cameraSelect.innerHTML = '';
+        videoDevices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Camera ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
+        
+        // Match currently active stream track ID if available
+        if (currentStream) {
+          const activeTrack = currentStream.getVideoTracks()[0];
+          const activeSettings = activeTrack ? activeTrack.getSettings() : null;
+          if (activeSettings && activeSettings.deviceId) {
+            cameraSelect.value = activeSettings.deviceId;
+          }
+        }
+      }
     }
-    
-    videoDevices.forEach((device, index) => {
-      const option = document.createElement('option');
-      option.value = device.deviceId;
-      option.text = device.label || `Camera ${index + 1}`;
-      cameraSelect.appendChild(option);
-    });
-    
-    // Choose the back camera by default
-    let defaultId = videoDevices[0].deviceId;
-    const backCamera = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment') || d.label.toLowerCase().includes('rear'));
-    if (backCamera) {
-      defaultId = backCamera.deviceId;
-      cameraSelect.value = defaultId;
-    }
-    
-    await startStreaming(defaultId);
-    
   } catch (err) {
     console.error('Error listing cameras:', err);
-    cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to initialize cameras: ${err.message}</p>`;
+    if (cameraOverlayMessage) {
+      cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to initialize cameras: ${err.message}</p>`;
+    }
   }
 }
 
@@ -803,7 +807,10 @@ function generateSyntheticFrame(mode, skewSec) {
 
 async function startStreaming(deviceId) {
   stopStream();
-  cameraOverlayMessage.style.display = 'flex';
+  if (cameraOverlayMessage) {
+    cameraOverlayMessage.style.display = 'flex';
+    cameraOverlayMessage.innerHTML = '<div class="spinner"></div><p>Connecting to camera feed...</p>';
+  }
   
   const constraints = {
     video: {
@@ -818,17 +825,47 @@ async function startStreaming(deviceId) {
   try {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     currentStream = stream;
+    
+    // Explicitly configure video attributes for mobile/desktop playback
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
     videoEl.srcObject = stream;
     
-    // Wait for video metadata to load
-    await new Promise(resolve => {
-      videoEl.onloadedmetadata = () => resolve();
-    });
+    // Explicitly trigger play
+    try {
+      const playPromise = videoEl.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+    } catch (playErr) {
+      console.warn('videoEl.play() warning:', playErr);
+    }
+    
+    // Wait for video metadata/frame arrival with a safe timeout
+    if (videoEl.readyState < 2 || !videoEl.videoWidth) {
+      await new Promise(resolve => {
+        let done = false;
+        const onReady = () => {
+          if (!done) {
+            done = true;
+            videoEl.removeEventListener('loadeddata', onReady);
+            videoEl.removeEventListener('loadedmetadata', onReady);
+            videoEl.removeEventListener('canplay', onReady);
+            resolve();
+          }
+        };
+        videoEl.addEventListener('loadeddata', onReady, { once: true });
+        videoEl.addEventListener('loadedmetadata', onReady, { once: true });
+        videoEl.addEventListener('canplay', onReady, { once: true });
+        setTimeout(onReady, 600); // 600ms safety guard
+      });
+    }
     
     activeDeviceId = deviceId || 'default';
     activeResolution = `${videoEl.videoWidth || 1280}x${videoEl.videoHeight || 720}`;
     
-    const selectedOption = cameraSelect.options[cameraSelect.selectedIndex];
+    const selectedOption = cameraSelect && cameraSelect.selectedIndex >= 0 ? cameraSelect.options[cameraSelect.selectedIndex] : null;
     activeLensName = selectedOption ? selectedOption.text : 'Default Camera';
     
     // Load profile specific to this camera lens & resolution
@@ -836,14 +873,17 @@ async function startStreaming(deviceId) {
     
     // Apply optimal manual options if browser supports them
     const track = stream.getVideoTracks()[0];
-    await configureOptimalCameraSettings(track);
+    if (track) {
+      await configureOptimalCameraSettings(track);
+    }
     
     // Hide loading overlay
-    cameraOverlayMessage.style.display = 'none';
+    if (cameraOverlayMessage) cameraOverlayMessage.style.display = 'none';
     
     // Make preview canvas match aspect ratio
-    previewCanvas.width = previewCanvas.clientWidth * window.devicePixelRatio;
-    previewCanvas.height = previewCanvas.clientHeight * window.devicePixelRatio;
+    const dpr = window.devicePixelRatio || 1;
+    previewCanvas.width = Math.max(320, Math.round((previewCanvas.clientWidth || 320) * dpr));
+    previewCanvas.height = Math.max(240, Math.round((previewCanvas.clientHeight || 240) * dpr));
     
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
@@ -852,13 +892,24 @@ async function startStreaming(deviceId) {
     
   } catch (err) {
     console.error('Error starting video stream:', err);
-    cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to access camera: ${err.message}<br>Make sure camera permissions are enabled.</p>`;
+    if (cameraOverlayMessage) {
+      cameraOverlayMessage.style.display = 'flex';
+      cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to access camera: ${err.message}<br>Make sure camera permissions are enabled.</p>`;
+    }
   }
 }
 
 function stopStream() {
   if (currentStream) {
-    currentStream.getTracks().forEach(track => track.stop());
+    if (typeof currentStream.getTracks === 'function') {
+      currentStream.getTracks().forEach(track => {
+        if (track && typeof track.stop === 'function') track.stop();
+      });
+    } else if (typeof currentStream.getVideoTracks === 'function') {
+      currentStream.getVideoTracks().forEach(track => {
+        if (track && typeof track.stop === 'function') track.stop();
+      });
+    }
     currentStream = null;
   }
 }
@@ -870,7 +921,7 @@ function processFrameLoop() {
     return;
   }
   
-  const hasLiveVideo = videoEl.readyState === videoEl.HAVE_ENOUGH_DATA;
+  const hasLiveVideo = Boolean(videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0);
   const isSynthetic = signalSource !== 'live';
   
   if (hasLiveVideo || isSynthetic) {
@@ -1155,6 +1206,9 @@ function processFrameLoop() {
     renderScannerOverlay(currentActiveAxis, 0, SIGNAL_LEN, signalSource !== 'live');
     renderWaveformChart();
     renderSpectrumChart(latestPeakBin, latestValidSignal);
+  } else {
+    // Render scanner grid and HUD even before camera frames arrive so canvas is never blank
+    renderScannerOverlay(currentActiveAxis, 0, SIGNAL_LEN, false);
   }
   
   animationFrameId = requestAnimationFrame(processFrameLoop);
@@ -1163,10 +1217,12 @@ function processFrameLoop() {
 // Render scanner visualization onto preview canvas
 function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
   // Keep dimensions synced
-  if (previewCanvas.width !== previewCanvas.clientWidth * window.devicePixelRatio ||
-      previewCanvas.height !== previewCanvas.clientHeight * window.devicePixelRatio) {
-    previewCanvas.width = previewCanvas.clientWidth * window.devicePixelRatio;
-    previewCanvas.height = previewCanvas.clientHeight * window.devicePixelRatio;
+  const dpr = window.devicePixelRatio || 1;
+  const targetW = Math.max(320, Math.round((previewCanvas.clientWidth || 320) * dpr));
+  const targetH = Math.max(240, Math.round((previewCanvas.clientHeight || 240) * dpr));
+  if (previewCanvas.width !== targetW || previewCanvas.height !== targetH) {
+    previewCanvas.width = targetW;
+    previewCanvas.height = targetH;
   }
   
   const w = previewCanvas.width;
@@ -1175,8 +1231,15 @@ function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
   // Clear and draw video or synthetic canvas
   if (isSynthetic) {
     previewCtx.drawImage(offscreenCanvas, 0, 0, w, h);
+  } else if (videoEl && videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+    try {
+      previewCtx.drawImage(videoEl, 0, 0, w, h);
+    } catch (drawErr) {
+      console.warn('Unable to draw video to previewCanvas:', drawErr);
+    }
   } else {
-    previewCtx.drawImage(videoEl, 0, 0, w, h);
+    previewCtx.fillStyle = '#0a0f1d';
+    previewCtx.fillRect(0, 0, w, h);
   }
   
   const x1 = (currentRoi.x / SIGNAL_LEN) * w;
