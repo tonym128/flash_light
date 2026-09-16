@@ -11,22 +11,27 @@ FlickerHz is designed as a zero-dependency, static Progressive Web Application (
 ```mermaid
 graph TD
     A[browser: index.html] --> B[app.js: Controller & UI Orchestrator]
-    B --> C[dsp.js: Radix-2 FFT / Detrending / IEEE 1789 / CIE SVM / SHA-256]
+    B -->|Transferable Buffers| K[dsp.worker.js: Background DSP Thread]
+    K --> C[dsp.js: Radix-2 FFT / Detrending / IEEE 1789 / CIE SVM / SHA-256]
+    B -->|Fallback| C
     B --> D[app.js: Canvas Renderers - Oscilloscope / Spectrum / Scanner / Strobe Tool]
-    B --> E[app.js: Audit Recorder, History Ledger & PNG Report Card]
+    B --> E[app.js: Facility Audit Session, Ledger, Print Report & PNG Report Card]
+    B --> L[app.js: Web Audio API Sonification Engine]
     B --> F[devices.json: Factory Calibrated Sensor Skews]
-    B --> G[sw.js: PWA Service Worker Cache v1.4.0]
-    H[test/dsp.test.js: Node Unit Tests - 17 Tests] --> C
+    B --> G[sw.js: PWA Service Worker Cache v1.5.0]
+    H[test/dsp.test.js: Node Unit Tests - 19 Tests] --> C
     I[server.js: Node SSL Dev Server] -.->|Serves HTTPS over local Wi-Fi| A
     J[Cloudflare Pages / Vercel] -.->|Hosts public HTTPS with camera headers| A
 ```
 
 ### Key Components
-1.  **Frontend Layout ([index.html](file:///home/tonym/Projects/flashy_light/index.html))**: Accessible interface containing live camera view, Exposure HUD, sensor profile badges, EU Ecodesign ($SVM$) card, synthetic test signal selector, tabbed waveform/spectrum graphs, 10-second audit recording card, multi-run comparison table, fullscreen Screen Strobe Generator, and calibration modal.
-2.  **Styles ([styles.css](file:///home/tonym/Projects/flashy_light/styles.css))**: Mobile-first responsive styling with high-contrast HUD badges, pulsating status indicators, responsive 5-column metric grid, audit ledger table, and fullscreen strobe viewport.
-3.  **DSP Core Engine ([dsp.js](file:///home/tonym/Projects/flashy_light/dsp.js))**:
+1.  **Frontend Layout ([index.html](file:///home/tonym/Projects/flashy_light/index.html))**: Accessible interface containing live camera view, Exposure HUD, Ambient Tare HUD, sensor profile badges, EU Ecodesign ($SVM$) card, synthetic test signal selector, tabbed waveform/spectrum graphs, facility audit session manager, printable compliance document view, fullscreen Screen Strobe Generator, and calibration modal.
+2.  **Styles ([styles.css](file:///home/tonym/Projects/flashy_light/styles.css))**: Mobile-first responsive styling with high-contrast HUD badges, pulsating status indicators, responsive 5-column metric grid, audit ledger table, fullscreen strobe viewport, and clean A4 `@media print` compliance sheet styling.
+3.  **Dedicated Web Worker ([dsp.worker.js](file:///home/tonym/Projects/flashy_light/dsp.worker.js))**: Offloads 4096-point Cooley-Tukey Radix-2 FFT, sliding-window detrending, and harmonic analysis to a separate CPU thread using transferable `ArrayBuffer`s, maintaining a rock-solid 60fps UI frame rate on mobile devices.
+4.  **DSP Core Engine ([dsp.js](file:///home/tonym/Projects/flashy_light/dsp.js))**:
     -   Zero-allocation Radix-2 Cooley-Tukey FFT implementation.
     -   Photometric de-gamma linearization table (`GAMMA_22_LUT`) converting sRGB pixel values to linear physical radiance.
+    -   Ambient DC baseline subtraction in modulation depth, flicker index, and SVM calculations.
     -   In-place $O(n)$ sliding window detrending filter preserving 50/60/100/120Hz oscillations while stripping DC spatial illumination.
     -   Parabolic sub-bin peak interpolation ($<0.1\text{ Hz}$ resolution).
     -   Modulation depth (Percent Flicker) and IES RP-16-10 Flicker Index calculators.
@@ -34,17 +39,22 @@ graph TD
     -   CIE TN 006:2016 / IEC TR 63158 Stroboscopic Visibility Measure ($SVM$).
     -   Deterministic SHA-256 digital signature generator for audit records.
     -   IEEE 1789-2015 driver hazard classification engine.
-    -   Universal module export (runs identically in browser and Node.js test environment).
-4.  **Application Controller ([app.js](file:///home/tonym/Projects/flashy_light/app.js))**:
+    -   Universal module export (runs identically in browser window, Web Worker, and Node.js test environment).
+5.  **Application Controller ([app.js](file:///home/tonym/Projects/flashy_light/app.js))**:
     -   Zero-GC pre-allocated TypedArray scratch buffers (`colAverages`, `rowAverages`, `windowedScratch`, `realBufferScratch`).
+    -   Web Worker thread orchestrator with main-thread fallback.
+    -   Ambient light DC baseline tare calibration (2-second room sampling).
+    -   Web Audio API acoustic sonification engine synthesizing real-time flicker waveforms into audible sound.
+    -   Facility audit session ledger tracking sequential fixture inspections with auto-incrementing fixture IDs.
+    -   One-click Consolidated Facility Compliance PDF/Print Report generator.
     -   Factory device preset auto-detection matching `navigator.userAgent` to `devices.json`.
     -   MediaTrack advanced constraints negotiator (shutter time, continuous focus lock).
     -   Interactive Screen Strobe Generator ($60, 100, 120, 144\text{ Hz}$) for zero-hardware secondary monitor calibration.
     -   Synthetic signal generator for offline hardware-independent verification.
     -   Multi-camera lens profile persistence in `localStorage`.
-    -   10-second rolling audit session recorder, cryptographic SHA-256 verification hash, multi-run comparison ledger, CSV/JSON exporters, and 5-metric PNG Report Card renderer.
+    -   10-second rolling audit session recorder, cryptographic SHA-256 verification hash, CSV/JSON exporters, and 5-metric PNG Report Card renderer.
 5.  **Device Registry ([devices.json](file:///home/tonym/Projects/flashy_light/devices.json))**: Pre-calibrated database of factory rolling shutter skews for Google Pixel, Samsung Galaxy, Apple iPhone, OnePlus, and Xiaomi flagship models.
-6.  **Automated Unit Tests ([test/dsp.test.js](file:///home/tonym/Projects/flashy_light/test/dsp.test.js))**: Native Node test suite (17 tests) verifying FFT transformations, parabolic peak accuracy, filter frequency responses, IEEE 1789 boundaries, de-gamma lookup, CIE SVM, and SHA-256 checksums.
+6.  **Automated Unit Tests ([test/dsp.test.js](file:///home/tonym/Projects/flashy_light/test/dsp.test.js))**: Native Node test suite (19 tests) verifying FFT transformations, parabolic peak accuracy, filter frequency responses, IEEE 1789 boundaries, de-gamma lookup, CIE SVM, ambient baseline tare subtraction, and SHA-256 checksums.
 7.  **Production Deployment Configs ([vercel.json](file:///home/tonym/Projects/flashy_light/vercel.json), [_headers](file:///home/tonym/Projects/flashy_light/_headers), [DEPLOYMENT.md](file:///home/tonym/Projects/flashy_light/DEPLOYMENT.md))**: Ready-to-deploy configuration with `Permissions-Policy: camera=(self)` and service worker cache headers.
 8.  **Local Dev Server ([server.js](file:///home/tonym/Projects/flashy_light/server.js))**: Spawns `openssl` for self-signed development certificates across local Wi-Fi.
 
@@ -127,8 +137,33 @@ If $SVM \le 0.4$, the stroboscopic effect is imperceptible to humans (**Ecodesig
 
 ### 11. Tamper-Proof Cryptographic SHA-256 Verification
 For official electrical inspections and commercial facility reports, `generateAuditChecksum` produces a deterministic SHA-256 fingerprint over the time-series samples:
-$$\text{Signature} = \text{SHA256}(\text{"v1.4.0:"} \parallel \text{rounded\_samples\_csv})$$
-The hex digest is embedded directly into the CSV header, JSON export file, and PNG Report Card footer badge.
+$$\text{Signature} = \text{SHA256}(\text{"v1.5.0:"} \parallel \text{rounded\_samples\_csv})$$
+The hex digest is embedded directly into the CSV header, JSON export file, live audit banner badge, and PNG Report Card footer badge.
+
+### 12. Ambient Light DC Baseline Tare Subtraction
+In real-world testing environments, ambient sunlight or secondary room luminaires add a constant DC lux offset $L_{\text{ambient}}$ to the sensor:
+$$L_{\text{measured}}(t) = L_{\text{ambient}} + L_{\text{bulb}}(t)$$
+Because standard Percent Flicker calculates $\frac{L_{\max} - L_{\min}}{L_{\max} + L_{\min}} \times 100\%$, the ambient DC bias inflates the denominator by $2 L_{\text{ambient}}$, artificially compressing modulation depth and creating false passes on dangerous drivers.
+The Ambient Tare engine averages $N=45$ frames of ambient room light when pointing away from the fixture:
+$$\text{Corrected Percent Flicker} = \frac{\max(d) - \min(d)}{2 \times \max(0.1, \text{mean}(y) - L_{\text{ambient}})} \times 100\%$$
+$$\text{Corrected Flicker Index} = \frac{\sum_{d > 0} d[n]}{\max(0.1, \sum y[n] - N \times L_{\text{ambient}})}$$
+$$A_{0, \text{corrected}} = \max(1.0, A_0 - L_{\text{ambient}})$$
+This ensures accurate laboratory-grade driver assessments even in sunlit or partially illuminated rooms.
+
+### 13. Dedicated Web Worker Asynchronous Threading Model
+To maintain 60fps UI performance without frame drops on budget mobile chips, the frame analysis pipeline runs inside [`dsp.worker.js`](file:///home/tonym/Projects/flashy_light/dsp.worker.js).
+- Main thread executes camera capture, dynamic ROI core detection, and de-gamma pixel integration.
+- Extracted scanline averages are transferred to the worker as zero-copy transferable `ArrayBuffer` objects:
+  `worker.postMessage({ rowAverages, colAverages, ... }, [rowAverages.buffer, colAverages.buffer])`
+- Worker executes 4096-point Radix-2 FFT, parabolic sub-bin vertex interpolation, harmonic overtone extraction, and SVM calculation, transferring results back to the main thread.
+- If the Worker API is unavailable or restricted by sandbox security policies, the controller falls back to inline main-thread DSP transparently.
+
+### 14. Web Audio API Waveform Sonification
+The application provides real-time acoustic feedback via browser `AudioContext`:
+- Pure DC drivers produce total silence ($\text{gain} = 0$).
+- AC ripple produces a fundamental oscillator tone matching the light frequency ($50\text{ Hz}, 60\text{ Hz}, 100\text{ Hz}, 120\text{ Hz}$).
+- Volume is modulated proportionally to Percent Flicker depth: $V = \min(0.22, (\% \text{Flicker} / 100) \times 0.18)$.
+- Harmonic overtones ($2f_1, 3f_1$) are blended into the output stream scaled by Total Harmonic Distortion ($THD$), allowing users to hear the difference between a clean sine wave driver and a buzzing, chopped triac dimmer.
 
 ---
 

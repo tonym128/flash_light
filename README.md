@@ -8,6 +8,10 @@ Rather than relying on low-frequency ambient light sensors, FlickerHz exploits t
 
 ## ✨ Features
 
+- **Dedicated DSP Web Worker Thread**: Offloads 4096-point Radix-2 FFT, sliding detrending, and harmonic calculations to a background worker (`dsp.worker.js`) with zero-copy transferable buffers, eliminating UI thread contention and guaranteeing 60fps rendering on budget Android devices.
+- **Ambient Light DC Baseline Tare ("Zeroing")**: Measure and subtract room ambient background DC lux, preventing sunlight and background fixtures from diluting modulation depth and artificially deflating SVM.
+- **Real-Time Web Audio Sonification ("Hear the Flicker")**: Multi-sensory acoustic sonification turning light oscillations into sound ($50\text{ Hz} / 60\text{ Hz} / 100\text{ Hz} / 120\text{ Hz}$ mains hum, PWM buzz with harmonic overtones, and complete silence for DC flicker-free drivers).
+- **Consolidated Facility Audit Session & PDF/Print Report**: Group multi-fixture audits by facility/room ID and export a consolidated, print-optimized A4 compliance report with pass rates, CIE TN 006:2016 verification, and SHA-256 digital signatures.
 - **Real-Time Frequency Measurement**: High-precision readout in Hz down to 0.1 Hz sub-bin resolution.
 - **Dynamic Core ROI Scanning**: Automatically detects bulb bounding box to isolate the bright core, boosting SNR by 15 dB and avoiding edge wash-out.
 - **Photometric De-Gamma Linearization**: Converts non-linear sRGB camera luma into true optical radiance ($Y_{\text{lin}} = Y^{2.2}$) via a precomputed zero-allocation LUT.
@@ -27,7 +31,7 @@ Rather than relying on low-frequency ambient light sensors, FlickerHz exploits t
 - **Certified 5-Metric Bulb Health Report Card**: Generates a high-resolution branded PNG summary card ($840 \times 1080\text{ px}$) complete with 5 key metrics (Frequency, Modulation, Flicker Index, THD, SVM), letter grading, Class A Lab Stability certification, and SHA-256 verification badge.
 - **Zero-GC High Performance**: Zero-allocation DSP pipeline using pre-allocated TypedArrays to eliminate garbage-collection stutter at 60fps.
 - **PWA Installation**: Install on your Android home screen and run fully offline (no Google Play Store required).
-- **Automated DSP Test Suite**: 17 automated unit tests (`npm test`) verifying FFT transforms, parabolic interpolation, IES Flicker Index, THD, CIE SVM, and SHA-256 checksum generation.
+- **Automated DSP Test Suite**: 19 automated unit tests (`npm test`) verifying FFT transforms, parabolic interpolation, IES Flicker Index, THD, CIE SVM, ambient baseline tare subtraction, and SHA-256 checksum generation.
 
 ---
 

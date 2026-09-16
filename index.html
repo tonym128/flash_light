@@ -116,6 +116,10 @@
           <div id="exposure-hud" class="exposure-hud optimal">Exposure: Optimal</div>
           <div id="shutter-hud" class="shutter-hud" style="display:none;">⚠️ Shutter Slow (Averaging)</div>
           <div id="roi-hud" class="roi-hud">ROI: Auto Core</div>
+          <div id="ambient-tare-badge" class="ambient-tare-badge" style="display:none;">
+            <span>Tare: 0.0 lum</span>
+            <button id="clear-tare-btn" class="clear-tare-btn" title="Clear Ambient Tare">×</button>
+          </div>
           
           <div id="camera-overlay-message" class="overlay-message">
             <div class="spinner"></div>
@@ -219,6 +223,16 @@
               <span>Freeze Stream</span>
             </button>
             
+            <button id="tare-ambient-btn" class="btn btn-secondary" title="Measure & subtract ambient room background light">
+              <svg class="btn-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3" stroke="currentColor" stroke-width="2"/></svg>
+              <span id="tare-btn-label">Tare Ambient</span>
+            </button>
+
+            <button id="audio-toggle-btn" class="btn btn-secondary" title="Sonify flicker into audible real-time sound">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" fill="currentColor"/></svg>
+              <span id="audio-btn-label">Audio: OFF</span>
+            </button>
+            
             <button id="calibrate-btn" class="btn btn-primary">
               <svg class="btn-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z" fill="currentColor"/></svg>
               <span>Auto Calibrate</span>
@@ -273,22 +287,34 @@
             <span class="audit-hash-badge" id="audit-hash-badge">SHA-256: --</span>
           </div>
 
-          <!-- Audit Run History & Comparison -->
+          <!-- Audit Run History & Facility Session Manager -->
           <div class="audit-history-container" id="audit-history-container" style="display:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-              <span style="font-size:0.75rem;font-weight:700;color:var(--color-muted);letter-spacing:1px;text-transform:uppercase;">Audit Run History & Comparison</span>
-              <button id="clear-history-btn" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:0.7rem;">Clear</button>
+              <span style="font-size:0.75rem;font-weight:700;color:var(--color-muted);letter-spacing:1px;text-transform:uppercase;">Facility Audit Session & Ledger</span>
+              <button id="clear-history-btn" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:0.7rem;">Clear Ledger</button>
             </div>
+            
+            <div class="facility-session-bar">
+              <input type="text" id="facility-name-input" class="facility-input" placeholder="Facility / Project Name" value="Main Facility Audit">
+              <input type="text" id="fixture-id-input" class="facility-input fixture-input" placeholder="Fixture ID" value="Fixture #1">
+              <button id="print-facility-report-btn" class="btn btn-secondary btn-sm" title="Generate consolidated compliance inspection PDF/printout">
+                <svg class="btn-icon" viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" fill="currentColor"/></svg>
+                <span>Print Facility PDF</span>
+              </button>
+            </div>
+
             <table class="audit-table">
               <thead>
                 <tr>
+                  <th>Fixture</th>
                   <th>Time</th>
                   <th>Freq</th>
                   <th>Flicker%</th>
                   <th>SVM</th>
                   <th>THD</th>
                   <th>Grade</th>
-                  <th>Stability</th>
+                  <th>EU Status</th>
+                  <th>SHA-256</th>
                 </tr>
               </thead>
               <tbody id="audit-history-tbody"></tbody>
@@ -435,6 +461,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Printable Facility Audit Compliance Document (Hidden in screen mode, visible in @media print) -->
+  <div id="printable-facility-report" class="printable-report" style="display:none;"></div>
 
   <!-- JS Scripts -->
   <script src="dsp.js"></script>

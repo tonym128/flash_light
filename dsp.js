@@ -115,7 +115,8 @@ function interpolatePeak(magnitudes, p) {
 }
 
 // Calculate Percent Flicker (Modulation Depth: (Max - Min) / (2 * Mean) * 100)
-function calculatePercentFlicker(rawSignal, waveform, startIdx, endIdx) {
+// Supports ambient DC baseline subtraction for tare calibration
+function calculatePercentFlicker(rawSignal, waveform, startIdx, endIdx, ambientBaseline = 0) {
   let sumRaw = 0;
   let minDetrended = Infinity;
   let maxDetrended = -Infinity;
@@ -130,7 +131,8 @@ function calculatePercentFlicker(rawSignal, waveform, startIdx, endIdx) {
   
   const meanRaw = sumRaw / span;
   const peakToPeak = maxDetrended - minDetrended;
-  return meanRaw > 0 ? (peakToPeak / (2 * meanRaw)) * 100 : 0;
+  const effectiveMean = Math.max(0.1, meanRaw - ambientBaseline);
+  return effectiveMean > 0 ? (peakToPeak / (2 * effectiveMean)) * 100 : 0;
 }
 
 // Classify Driver Quality based on IEEE 1789-2015 recommended practice
@@ -204,7 +206,8 @@ function classifyDriverQuality(freq, percentFlicker) {
 
 // Calculate IES Flicker Index (Area Above Mean / Total Area Under Waveform)
 // RP-16-10 / IESNA Standard: ranges from 0.0 (pure DC) to 1.0 (extreme pulse)
-function calculateFlickerIndex(rawSignal, waveform, startIdx, endIdx) {
+// Supports ambient baseline subtraction
+function calculateFlickerIndex(rawSignal, waveform, startIdx, endIdx, ambientBaseline = 0) {
   let sumRaw = 0;
   let areaAboveMean = 0;
   const span = endIdx - startIdx;
@@ -217,9 +220,7 @@ function calculateFlickerIndex(rawSignal, waveform, startIdx, endIdx) {
     }
   }
   
-  const totalArea = sumRaw; // integral of raw illumination across span
-  if (totalArea <= 0) return 0;
-  
+  const totalArea = Math.max(0.1, sumRaw - (span * ambientBaseline));
   const flickerIndex = areaAboveMean / totalArea;
   return Math.max(0, Math.min(1.0, flickerIndex));
 }
@@ -385,12 +386,13 @@ function getCieStroboscopicThreshold(freq) {
   }
 }
 
-function calculateSVM(magnitudes, fundamentalBin, skewSec, meanIllumination) {
+function calculateSVM(magnitudes, fundamentalBin, skewSec, meanIllumination, ambientBaseline = 0) {
   if (!magnitudes || fundamentalBin <= 0 || fundamentalBin >= magnitudes.length) {
-    return { svm: 0, isEcodesignCompliant: true, rating: "COMPLIANT (Flicker-Free)" };
+    return { svm: 0, isEcodesignCompliant: true, rating: "COMPLIANT (Flicker-Free)", ratingClass: "rating-excellent" };
   }
   
-  const a0 = Math.max(1.0, meanIllumination || magnitudes[0] || 1.0);
+  const rawA0 = meanIllumination || magnitudes[0] || 1.0;
+  const a0 = Math.max(1.0, rawA0 - ambientBaseline);
   const halfFft = magnitudes.length;
   let sumTerm = 0;
   
@@ -491,17 +493,17 @@ if (typeof module !== 'undefined' && module.exports) {
     generateAuditChecksum,
     getCieStroboscopicThreshold
   };
-} else if (typeof window !== 'undefined') {
-  window.FFT = FFT;
-  window.detrendInPlace = detrendInPlace;
-  window.interpolatePeak = interpolatePeak;
-  window.calculatePercentFlicker = calculatePercentFlicker;
-  window.calculateFlickerIndex = calculateFlickerIndex;
-  window.calculateHarmonicsAndTHD = calculateHarmonicsAndTHD;
-  window.calculateAuditStability = calculateAuditStability;
-  window.classifyDriverQuality = classifyDriverQuality;
-  window.linearizeLuminance = linearizeLuminance;
-  window.calculateSVM = calculateSVM;
-  window.generateAuditChecksum = generateAuditChecksum;
-  window.getCieStroboscopicThreshold = getCieStroboscopicThreshold;
+} else if (typeof self !== 'undefined') {
+  self.FFT = FFT;
+  self.detrendInPlace = detrendInPlace;
+  self.interpolatePeak = interpolatePeak;
+  self.calculatePercentFlicker = calculatePercentFlicker;
+  self.calculateFlickerIndex = calculateFlickerIndex;
+  self.calculateHarmonicsAndTHD = calculateHarmonicsAndTHD;
+  self.calculateAuditStability = calculateAuditStability;
+  self.classifyDriverQuality = classifyDriverQuality;
+  self.linearizeLuminance = linearizeLuminance;
+  self.calculateSVM = calculateSVM;
+  self.generateAuditChecksum = generateAuditChecksum;
+  self.getCieStroboscopicThreshold = getCieStroboscopicThreshold;
 }

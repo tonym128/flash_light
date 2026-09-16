@@ -1366,3 +1366,173 @@ body {
   font-weight: 700;
 }
 
+/* Ambient Tare HUD Badge */
+.ambient-tare-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(14, 165, 233, 0.25);
+  border: 1px solid rgba(14, 165, 233, 0.6);
+  color: #38bdf8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+}
+
+.clear-tare-btn {
+  background: transparent;
+  border: none;
+  color: #38bdf8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 2px;
+  font-weight: bold;
+}
+.clear-tare-btn:hover {
+  color: #fff;
+}
+
+/* Facility Session Controls */
+.facility-session-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.facility-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--color-text);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  flex: 2;
+  min-width: 140px;
+}
+
+.facility-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
+.fixture-input {
+  flex: 1;
+  min-width: 100px;
+}
+
+/* Print Styles for Consolidated Facility Compliance Report */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    margin: 0 !important;
+    padding: 20px !important;
+  }
+
+  header, main, .strobe-modal, .modal, footer {
+    display: none !important;
+  }
+
+  .printable-report {
+    display: block !important;
+    color: #111827 !important;
+  }
+
+  .print-header {
+    border-bottom: 2px solid #0284c7;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .print-header h1 {
+    font-size: 20pt;
+    margin: 0 0 4pt 0;
+    color: #0f172a;
+  }
+
+  .print-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 12px;
+    border-radius: 6px;
+  }
+
+  .print-meta-box {
+    font-size: 9pt;
+  }
+  .print-meta-box strong {
+    display: block;
+    color: #64748b;
+    font-size: 8pt;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+
+  .print-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin-bottom: 20px;
+  }
+
+  .print-table th {
+    background: #0f172a !important;
+    color: #ffffff !important;
+    padding: 6px 8px;
+    text-align: left;
+    font-weight: 600;
+  }
+
+  .print-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .print-badge {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 7.5pt;
+    display: inline-block;
+  }
+  .print-pass {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+  }
+  .print-fail {
+    background: #fee2e2 !important;
+    color: #991b1b !important;
+  }
+
+  .print-footer {
+    border-top: 1px solid #cbd5e1;
+    padding-top: 10px;
+    font-size: 8pt;
+    color: #64748b;
+    display: flex;
+    justify-content: space-between;
+  }
+}
+
+

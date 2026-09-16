@@ -431,4 +431,48 @@ test('generateAuditChecksum creates consistent tamper-proof fingerprint', () => 
   assert.notStrictEqual(hash1, hash3, 'Modified data must produce different checksum');
 });
 
+// ==========================================
+// 12. Ambient DC Baseline Tare Subtraction
+// ==========================================
+test('calculatePercentFlicker correctly subtracts ambient DC offset', () => {
+  const n = 512;
+  const raw = new Float32Array(n);
+  const waveform = new Float32Array(n);
+
+  // Real bulb: AC amplitude = 20, bulb DC = 60. Ambient DC = 40.
+  // Raw total DC = 100.
+  // Without tare: 40 / (2 * 100) * 100 = 20.0% (diluted by ambient!)
+  // With ambient tare = 40: effective bulb DC = 60.
+  // Corrected: 40 / (2 * 60) * 100 = 33.33%
+  for (let i = 0; i < n; i++) {
+    const ac = 20 * Math.sin(2 * Math.PI * 4 * i / n);
+    raw[i] = 100 + ac; // 60 bulb DC + 40 ambient DC
+    waveform[i] = ac;
+  }
+
+  const dilutedPct = calculatePercentFlicker(raw, waveform, 30, n - 30, 0);
+  assert(Math.abs(dilutedPct - 20.0) < 0.2, `Diluted flicker should be ~20.0%, got ${dilutedPct}`);
+
+  const correctedPct = calculatePercentFlicker(raw, waveform, 30, n - 30, 40.0);
+  assert(Math.abs(correctedPct - 33.33) < 0.4, `Corrected flicker should be ~33.33%, got ${correctedPct}`);
+});
+
+test('calculateSVM corrects stroboscopic visibility when ambient light is tared', () => {
+  const halfFft = 2048;
+  const magnitudes = new Float32Array(halfFft);
+  const skewSec = 0.030;
+  const peakBin = Math.round(100 * 8 * skewSec);
+  
+  // AC ripple = 10. Raw DC = 100 (50 bulb DC + 50 ambient light).
+  magnitudes[peakBin] = 10.0;
+  
+  // Without tare: a0 = 100
+  const uncorrected = calculateSVM(magnitudes, peakBin, skewSec, 100.0, 0);
+  // With tare: effective a0 = 50 -> relative Fourier amplitude doubled -> higher SVM!
+  const corrected = calculateSVM(magnitudes, peakBin, skewSec, 100.0, 50.0);
+  
+  assert(corrected.svm > uncorrected.svm, `Corrected SVM ${corrected.svm} must be higher than uncorrected ${uncorrected.svm} when ambient DC is removed`);
+});
+
 console.log(`\nAll ${testsPassed} DSP unit tests passed successfully!\n`);
+

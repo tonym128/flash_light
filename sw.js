@@ -1,9 +1,10 @@
-const CACHE_NAME = 'flickerhz-v1.4.0';
+const CACHE_NAME = 'flickerhz-v1.5.0';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './dsp.js',
+  './dsp.worker.js',
   './app.js',
   './devices.json',
   './manifest.json',

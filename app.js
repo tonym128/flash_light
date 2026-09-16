@@ -123,6 +123,20 @@ const auditHistoryContainer = document.getElementById('audit-history-container')
 const auditHistoryTbody = document.getElementById('audit-history-tbody');
 const clearHistoryBtn = document.getElementById('clear-history-btn');
 
+// Ambient Tare & Audio Sonification Elements
+const ambientTareBadge = document.getElementById('ambient-tare-badge');
+const clearTareBtn = document.getElementById('clear-tare-btn');
+const tareAmbientBtn = document.getElementById('tare-ambient-btn');
+const tareBtnLabel = document.getElementById('tare-btn-label');
+const audioToggleBtn = document.getElementById('audio-toggle-btn');
+const audioBtnLabel = document.getElementById('audio-btn-label');
+
+// Facility Session Elements
+const facilityNameInput = document.getElementById('facility-name-input');
+const fixtureIdInput = document.getElementById('fixture-id-input');
+const printFacilityReportBtn = document.getElementById('print-facility-report-btn');
+const printableFacilityReport = document.getElementById('printable-facility-report');
+
 // Strobe Generator Elements
 const openStrobeBtn = document.getElementById('open-strobe-btn');
 const strobeModal = document.getElementById('strobe-modal');
@@ -234,6 +248,28 @@ let isCalibrating = false;
 let calTargetFreq = 100; // default 50Hz grid -> 100Hz flicker
 let calPeaks = [];
 const CAL_SAMPLES_NEEDED = 60;
+
+// Web Worker State
+let dspWorker = null;
+let isWorkerBusy = false;
+let frameCounter = 0;
+
+// Ambient Tare State
+let isTaringAmbient = false;
+let ambientTareCount = 0;
+let ambientTareSum = 0;
+let ambientBaselineLuminance = 0;
+const AMBIENT_TARE_FRAMES = 45;
+
+// Audio Sonification State (Web Audio API)
+let audioCtx = null;
+let isAudioEnabled = false;
+let masterGain = null;
+let fundamentalOsc = null;
+let harmonicOsc2 = null;
+let harmonicGain2 = null;
+let harmonicOsc3 = null;
+let harmonicGain3 = null;
 
 // ==========================================
 // Multi-Lens Profile Persistence
@@ -408,6 +444,249 @@ function analyzeSignalInPlace(rawSignal, skewSec, outResult) {
   outResult.peakBin = peakBin;
   outResult.peakMag = maxMag;
 }
+
+// ==========================================
+// Web Worker Initialization & Message Handling
+// ==========================================
+function initWebWorker() {
+  if (typeof Worker === 'undefined') return;
+  try {
+    dspWorker = new Worker('dsp.worker.js');
+    dspWorker.onmessage = handleWorkerMessage;
+    dspWorker.onerror = (err) => {
+      console.warn('DSP Web Worker encountered an error, falling back to main-thread DSP:', err);
+      dspWorker = null;
+      isWorkerBusy = false;
+    };
+    console.log('DSP Web Worker initialized successfully (Thread Decoupled)');
+  } catch (err) {
+    console.warn('Unable to initialize Web Worker (origin restriction / sandboxed), using main thread DSP:', err);
+    dspWorker = null;
+  }
+}
+
+function handleWorkerMessage(e) {
+  const d = e.data;
+  if (!d || d.type !== 'FRAME_RESULT') return;
+  isWorkerBusy = false;
+
+  // Restore transferred arrays
+  if (d.rowAverages) rowAverages.set(d.rowAverages);
+  if (d.colAverages) colAverages.set(d.colAverages);
+
+  currentActiveAxis = d.winner;
+  const validSignal = d.validSignal;
+  const freq = d.freq;
+  const snr = d.snr;
+  const percentFlicker = d.percentFlicker;
+  const flickerIndex = d.flickerIndex;
+  const thd = d.thd;
+  const svm = d.svm;
+  const driverQuality = d.driverQuality;
+  const ratingClass = d.ratingClass;
+
+  if (d.waveform) signalWaveformBuffer.set(d.waveform);
+  if (d.magnitudes) fftMagnitudesBuffer.set(d.magnitudes);
+
+  updateMetricsDisplay({
+    validSignal,
+    freq,
+    snr,
+    percentFlicker,
+    flickerIndex,
+    thd,
+    svm,
+    svmRatingClass: d.svmRatingClass,
+    driverQuality,
+    ratingClass,
+    isSynthetic: signalSource !== 'live',
+    meanRoiLuminance: d.meanRoiLuminance || 100
+  });
+
+  // Audio Sonification update
+  updateAudioSonification(freq, percentFlicker, thd, snr);
+
+  // Calibration logging
+  if (isCalibrating && validSignal) {
+    calPeaks.push(d.peakBin);
+    const progress = Math.min(100, Math.round((calPeaks.length / CAL_SAMPLES_NEEDED) * 100));
+    calProgressBar.style.width = progress + '%';
+    calStatusText.innerText = `Capturing signal... ${calPeaks.length} / ${CAL_SAMPLES_NEEDED} samples`;
+    if (calPeaks.length >= CAL_SAMPLES_NEEDED) {
+      finishCalibration();
+    }
+  }
+
+  // Session recording
+  if (isRecording && validSignal) {
+    recordSamples.push({
+      timeMs: Date.now() - recordStartTime,
+      freq,
+      percentFlicker,
+      flickerIndex,
+      thd,
+      svm,
+      snr,
+      driverQuality,
+      confidence
+    });
+  }
+}
+
+// ==========================================
+// Centralized Metrics UI Updater
+// ==========================================
+function updateMetricsDisplay(data) {
+  const {
+    validSignal,
+    freq,
+    snr,
+    percentFlicker,
+    flickerIndex,
+    thd,
+    svm,
+    svmRatingClass,
+    driverQuality,
+    ratingClass,
+    isSynthetic,
+    meanRoiLuminance
+  } = data;
+
+  if (validSignal) {
+    if (smoothedFreq === 0) {
+      smoothedFreq = freq;
+    } else {
+      smoothedFreq = smoothedFreq * 0.82 + freq * 0.18;
+    }
+
+    const calculatedConfidence = Math.min(100, Math.round((snr - 3.2) * 20));
+    confidence = Math.max(confidence * 0.9 + calculatedConfidence * 0.1, calculatedConfidence);
+
+    hzValEl.innerText = smoothedFreq.toFixed(1);
+    statusTextEl.innerText = isSynthetic ? "SYNTHETIC SIGNAL ACTIVE" : "STABLE FLICKER DETECTED";
+    statusTextEl.style.color = "var(--color-primary)";
+
+    flickerPctValEl.innerText = percentFlicker.toFixed(1) + '%';
+    if (flickerIndexValEl) flickerIndexValEl.innerText = flickerIndex.toFixed(3);
+    if (thdValEl) thdValEl.innerText = (thd > 0 && freq > 0) ? (thd.toFixed(1) + '%') : '--.-%';
+    if (svmValEl) {
+      svmValEl.innerText = svm.toFixed(2);
+      svmValEl.className = 'sub-metric-value ' + (svmRatingClass || 'rating-none');
+    }
+    driverQualityValEl.innerText = driverQuality;
+    driverQualityValEl.className = 'sub-metric-value ' + ratingClass;
+
+    // Shutter speed attenuation heuristic
+    if (shutterHudEl) {
+      const isAutoExp = cameraModeBadgeEl && cameraModeBadgeEl.innerText.includes('Auto');
+      if (isAutoExp && meanRoiLuminance < 45 && snr < 4.5 && !isSynthetic) {
+        shutterHudEl.style.display = 'block';
+        shutterHudEl.innerText = '⚠️ Shutter Slow (Averaging Flicker)';
+      } else {
+        shutterHudEl.style.display = 'none';
+      }
+    }
+  } else {
+    confidence = Math.max(0, confidence * 0.92);
+    if (confidence < 10) {
+      hzValEl.innerText = '--.-';
+      statusTextEl.innerText = "NO FLICKER DETECTED";
+      statusTextEl.style.color = "var(--color-muted)";
+      flickerPctValEl.innerText = '--.-%';
+      if (flickerIndexValEl) flickerIndexValEl.innerText = '0.000';
+      if (thdValEl) thdValEl.innerText = '--.-%';
+      if (svmValEl) {
+        svmValEl.innerText = '--.--';
+        svmValEl.className = 'sub-metric-value rating-none';
+      }
+      driverQualityValEl.innerText = "UNKNOWN";
+      driverQualityValEl.className = 'sub-metric-value rating-none';
+      if (shutterHudEl) shutterHudEl.style.display = 'none';
+    }
+  }
+
+  confidenceBar.style.width = confidence + '%';
+  confidencePct.innerText = Math.round(confidence) + '%';
+  updateGridMatchTag(smoothedFreq, confidence);
+}
+
+// ==========================================
+// Web Audio API Sonification ("Hear the Flicker")
+// ==========================================
+function initAudio() {
+  if (audioCtx) return;
+  try {
+    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtxClass) return;
+    audioCtx = new AudioCtxClass();
+
+    masterGain = audioCtx.createGain();
+    masterGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    masterGain.connect(audioCtx.destination);
+
+    // Fundamental oscillator (triangle wave)
+    fundamentalOsc = audioCtx.createOscillator();
+    fundamentalOsc.type = 'triangle';
+    fundamentalOsc.frequency.setValueAtTime(100, audioCtx.currentTime);
+    fundamentalOsc.connect(masterGain);
+    fundamentalOsc.start();
+
+    // 2nd harmonic oscillator (sine wave)
+    harmonicOsc2 = audioCtx.createOscillator();
+    harmonicOsc2.type = 'sine';
+    harmonicGain2 = audioCtx.createGain();
+    harmonicGain2.gain.setValueAtTime(0.0, audioCtx.currentTime);
+    harmonicOsc2.frequency.setValueAtTime(200, audioCtx.currentTime);
+    harmonicOsc2.connect(harmonicGain2);
+    harmonicGain2.connect(masterGain);
+    harmonicOsc2.start();
+
+    // 3rd harmonic oscillator (sawtooth wave)
+    harmonicOsc3 = audioCtx.createOscillator();
+    harmonicOsc3.type = 'sawtooth';
+    harmonicGain3 = audioCtx.createGain();
+    harmonicGain3.gain.setValueAtTime(0.0, audioCtx.currentTime);
+    harmonicOsc3.frequency.setValueAtTime(300, audioCtx.currentTime);
+    harmonicOsc3.connect(harmonicGain3);
+    harmonicGain3.connect(masterGain);
+    harmonicOsc3.start();
+  } catch (e) {
+    console.warn('AudioContext initialization failed:', e);
+  }
+}
+
+function updateAudioSonification(freq, percentFlicker, thd, snr) {
+  if (!isAudioEnabled || !audioCtx) return;
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+  const now = audioCtx.currentTime;
+
+  // Pure DC, low SNR, or outside audible range -> silence
+  if (snr < 3.2 || freq < 25 || freq > 2500 || percentFlicker < 1.0) {
+    masterGain.gain.setTargetAtTime(0.00001, now, 0.05);
+    return;
+  }
+
+  // Set fundamental tone
+  fundamentalOsc.frequency.setTargetAtTime(Math.max(20, Math.min(2500, freq)), now, 0.03);
+
+  // Volume scaled by modulation depth
+  const targetVol = Math.min(0.22, (percentFlicker / 100) * 0.18);
+  masterGain.gain.setTargetAtTime(targetVol, now, 0.05);
+
+  // Scale harmonics by THD
+  const hRatio = Math.min(1.0, (thd || 0) / 50.0);
+  harmonicOsc2.frequency.setTargetAtTime(Math.max(20, Math.min(5000, freq * 2)), now, 0.03);
+  harmonicGain2.gain.setTargetAtTime(hRatio * 0.3, now, 0.05);
+
+  harmonicOsc3.frequency.setTargetAtTime(Math.max(20, Math.min(7500, freq * 3)), now, 0.03);
+  harmonicGain3.gain.setTargetAtTime(hRatio * 0.15, now, 0.05);
+}
+
+// Initialize worker
+initWebWorker();
 
 // ==========================================
 // Frame Processing & Camera Logic
@@ -758,125 +1037,114 @@ function processFrameLoop() {
       }
       colAverages[x] = sum / roiSpanY;
     }
+
+    // Handle Ambient Tare accumulation
+    if (isTaringAmbient) {
+      ambientTareSum += meanRoiLuminance;
+      ambientTareCount++;
+      if (ambientTareCount >= AMBIENT_TARE_FRAMES) {
+        ambientBaselineLuminance = Math.round(ambientTareSum / ambientTareCount);
+        isTaringAmbient = false;
+        if (tareBtnLabel) tareBtnLabel.innerText = 'Tare Active';
+        if (ambientTareBadge) {
+          ambientTareBadge.style.display = 'flex';
+          ambientTareBadge.querySelector('span').innerText = `Tare: ${ambientBaselineLuminance} lum`;
+        }
+      }
+    }
     
-    // 4. In-place process signals for both axes
-    analyzeSignalInPlace(rowAverages, skewSeconds, analysisResultY);
-    analyzeSignalInPlace(colAverages, skewSeconds, analysisResultX);
-    
-    // 5. Select winning axis (higher SNR)
-    let winner = 'y';
-    if (scanMode === 'auto') {
-      winner = (analysisResultX.snr > analysisResultY.snr) ? 'x' : 'y';
+    // 4. Process signals via Web Worker (offloaded) or Main-Thread Fallback
+    if (dspWorker) {
+      if (!isWorkerBusy) {
+        isWorkerBusy = true;
+        const rowCopy = new Float32Array(rowAverages);
+        const colCopy = new Float32Array(colAverages);
+        dspWorker.postMessage({
+          type: 'ANALYZE_FRAME',
+          rowAverages: rowCopy,
+          colAverages: colCopy,
+          skewSeconds,
+          scanMode,
+          meanRoiLuminance,
+          ambientBaseline: ambientBaselineLuminance,
+          rx1, rx2, ry1, ry2,
+          frameId: ++frameCounter
+        }, [rowCopy.buffer, colCopy.buffer]);
+      }
     } else {
-      winner = scanMode;
-    }
-    currentActiveAxis = winner;
-    
-    const result = (winner === 'y') ? analysisResultY : analysisResultX;
-    const validSignal = result.snr > 3.2;
-    
-    // Calibration logging
-    if (isCalibrating && validSignal) {
-      calPeaks.push(result.peakBin);
-      const progress = Math.min(100, Math.round((calPeaks.length / CAL_SAMPLES_NEEDED) * 100));
-      calProgressBar.style.width = progress + '%';
-      calStatusText.innerText = `Capturing signal... ${calPeaks.length} / ${CAL_SAMPLES_NEEDED} samples`;
+      // Inline Fallback
+      analyzeSignalInPlace(rowAverages, skewSeconds, analysisResultY);
+      analyzeSignalInPlace(colAverages, skewSeconds, analysisResultX);
       
-      if (calPeaks.length >= CAL_SAMPLES_NEEDED) {
-        finishCalibration();
-      }
-    }
-    
-    let percentFlicker = 0;
-    let flickerIndex = 0;
-    let thd = 0;
-    let svm = 0;
-    let driverQuality = "UNKNOWN";
-    let ratingClass = "rating-none";
-    
-    if (validSignal) {
-      if (smoothedFreq === 0) {
-        smoothedFreq = result.freq;
+      let winner = 'y';
+      if (scanMode === 'auto') {
+        winner = (analysisResultX.snr > analysisResultY.snr) ? 'x' : 'y';
       } else {
-        smoothedFreq = smoothedFreq * 0.82 + result.freq * 0.18;
+        winner = scanMode;
       }
+      currentActiveAxis = winner;
       
-      const calculatedConfidence = Math.min(100, Math.round((result.snr - 3.2) * 20));
-      confidence = Math.max(confidence * 0.9 + calculatedConfidence * 0.1, calculatedConfidence);
+      const result = (winner === 'y') ? analysisResultY : analysisResultX;
+      const validSignal = result.snr > 3.2;
       
-      hzValEl.innerText = smoothedFreq.toFixed(1);
-      statusTextEl.innerText = isSynthetic ? "SYNTHETIC SIGNAL ACTIVE" : "STABLE FLICKER DETECTED";
-      statusTextEl.style.color = "var(--color-primary)";
+      let percentFlicker = 0;
+      let flickerIndex = 0;
+      let thd = 0;
+      let svm = 0;
+      let svmRatingClass = "rating-none";
+      let driverQuality = "UNKNOWN";
+      let ratingClass = "rating-none";
       
-      const rawSignal = (winner === 'y') ? rowAverages : colAverages;
-      const metricStart = (winner === 'y') ? ry1 : rx1;
-      const metricEnd = (winner === 'y') ? ry2 : rx2;
-      
-      // Calculate Percent Flicker (Modulation Depth)
-      percentFlicker = calculatePercentFlicker(rawSignal, result.waveform, metricStart, metricEnd);
-      
-      // Calculate IES Flicker Index (Area Above Mean / Total Area)
-      flickerIndex = calculateFlickerIndex(rawSignal, result.waveform, metricStart, metricEnd);
-      
-      // Calculate Waveform Harmonics & THD
-      const harmonicResult = calculateHarmonicsAndTHD(result.magnitudes, result.peakBin, skewSeconds);
-      thd = harmonicResult.thd;
-      
-      // Calculate Stroboscopic Visibility Measure (SVM) - CIE TN 006:2016 / EU Ecodesign
-      const svmResult = calculateSVM(result.magnitudes, result.peakBin, skewSeconds, meanRoiLuminance);
-      svm = svmResult.svm;
-      
-      // Classify Driver Quality based on IEEE 1789-2015
-      const freq = result.freq;
-      const classification = classifyDriverQuality(freq, percentFlicker);
-      driverQuality = classification.quality;
-      ratingClass = classification.ratingClass;
-      
-      // Update Metric UI elements
-      flickerPctValEl.innerText = percentFlicker.toFixed(1) + '%';
-      if (flickerIndexValEl) flickerIndexValEl.innerText = flickerIndex.toFixed(3);
-      if (thdValEl) thdValEl.innerText = (thd > 0 && freq > 0) ? (thd.toFixed(1) + '%') : '--.-%';
-      if (svmValEl) {
-        svmValEl.innerText = svm.toFixed(2);
-        svmValEl.className = 'sub-metric-value ' + svmResult.ratingClass;
-      }
-      driverQualityValEl.innerText = driverQuality;
-      driverQualityValEl.className = 'sub-metric-value ' + ratingClass;
-      
-      // Shutter speed attenuation heuristic
-      if (shutterHudEl) {
-        const isAutoExp = cameraModeBadgeEl && cameraModeBadgeEl.innerText.includes('Auto');
-        if (isAutoExp && meanRoiLuminance < 45 && result.snr < 4.5 && !isSynthetic) {
-          shutterHudEl.style.display = 'block';
-          shutterHudEl.innerText = '⚠️ Shutter Slow (Averaging Flicker)';
-        } else {
-          shutterHudEl.style.display = 'none';
+      if (validSignal) {
+        const rawSignal = (winner === 'y') ? rowAverages : colAverages;
+        const metricStart = (winner === 'y') ? ry1 : rx1;
+        const metricEnd = (winner === 'y') ? ry2 : rx2;
+        
+        percentFlicker = calculatePercentFlicker(rawSignal, result.waveform, metricStart, metricEnd, ambientBaselineLuminance);
+        flickerIndex = calculateFlickerIndex(rawSignal, result.waveform, metricStart, metricEnd, ambientBaselineLuminance);
+        
+        const harmonicResult = calculateHarmonicsAndTHD(result.magnitudes, result.peakBin, skewSeconds);
+        thd = harmonicResult.thd;
+        
+        const svmResult = calculateSVM(result.magnitudes, result.peakBin, skewSeconds, meanRoiLuminance, ambientBaselineLuminance);
+        svm = svmResult.svm;
+        svmRatingClass = svmResult.ratingClass;
+        
+        const classification = classifyDriverQuality(result.freq, percentFlicker);
+        driverQuality = classification.quality;
+        ratingClass = classification.ratingClass;
+        
+        if (isCalibrating) {
+          calPeaks.push(result.peakBin);
+          const progress = Math.min(100, Math.round((calPeaks.length / CAL_SAMPLES_NEEDED) * 100));
+          calProgressBar.style.width = progress + '%';
+          calStatusText.innerText = `Capturing signal... ${calPeaks.length} / ${CAL_SAMPLES_NEEDED} samples`;
+          if (calPeaks.length >= CAL_SAMPLES_NEEDED) finishCalibration();
         }
       }
       
-    } else {
-      confidence = Math.max(0, confidence - 3);
-      if (confidence === 0) {
-        hzValEl.innerText = "--.-";
-        flickerPctValEl.innerText = "--.-%";
-        if (flickerIndexValEl) flickerIndexValEl.innerText = "-.---";
-        if (thdValEl) thdValEl.innerText = "--.-%";
-        if (svmValEl) {
-          svmValEl.innerText = "-.--";
-          svmValEl.className = "sub-metric-value rating-none";
-        }
-        driverQualityValEl.innerText = "UNKNOWN";
-        driverQualityValEl.className = "sub-metric-value rating-none";
-        statusTextEl.innerText = "NO FLICKER DETECTED";
-        statusTextEl.style.color = "var(--color-muted)";
-        if (shutterHudEl) shutterHudEl.style.display = 'none';
-      } else {
-        statusTextEl.innerText = "WEAK SIGNAL - HOLD STEADY";
-        statusTextEl.style.color = "var(--color-secondary)";
-      }
+      signalWaveformBuffer.set(result.waveform);
+      fftMagnitudesBuffer.set(result.magnitudes);
+      
+      updateMetricsDisplay({
+        validSignal,
+        freq: result.freq,
+        snr: result.snr,
+        percentFlicker,
+        flickerIndex,
+        thd,
+        svm,
+        svmRatingClass,
+        driverQuality,
+        ratingClass,
+        isSynthetic: signalSource !== 'live',
+        meanRoiLuminance
+      });
+      
+      updateAudioSonification(result.freq, percentFlicker, thd, result.snr);
     }
     
-    // Session recording sample accumulation
+    // Session recording progress update
     if (isRecording) {
       const elapsed = Date.now() - recordStartTime;
       const progress = Math.min(100, (elapsed / RECORD_DURATION_MS) * 100);
@@ -884,31 +1152,10 @@ function processFrameLoop() {
       recTimerLabel.innerText = `Recording: ${(elapsed / 1000).toFixed(1)}s / 10.0s`;
       recSamplesCount.innerText = `${recordSamples.length} samples`;
       
-      recordSamples.push({
-        timeMs: elapsed,
-        freq: validSignal ? result.freq : 0,
-        percentFlicker: validSignal ? percentFlicker : 0,
-        flickerIndex: validSignal ? flickerIndex : 0,
-        thd: validSignal ? thd : 0,
-        svm: validSignal ? svm : 0,
-        snr: result.snr,
-        driverQuality: driverQuality,
-        confidence: confidence,
-        peakBin: result.peakBin
-      });
-      
       if (elapsed >= RECORD_DURATION_MS) {
         finishRecording();
       }
     }
-    
-    // Cache waveform and FFT magnitudes
-    signalWaveformBuffer.set(result.waveform);
-    fftMagnitudesBuffer.set(result.magnitudes);
-    
-    // Update confidence bar UI
-    confidencePctEl.innerText = Math.round(confidence) + '%';
-    confidenceBarEl.style.width = confidence + '%';
     if (confidence > 75) {
       confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #00e676)';
     } else if (confidence > 35) {
@@ -1466,8 +1713,13 @@ function finishRecording() {
     auditHashContainer.style.display = 'block';
   }
   
+  const fixtureId = (fixtureIdInput && fixtureIdInput.value.trim()) || 'Fixture #1';
+  const facilityName = (facilityNameInput && facilityNameInput.value.trim()) || 'Main Facility';
+
   // Save to audit history in localStorage
   saveAuditToHistory({
+    fixtureId,
+    facilityName,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     freq: parseFloat(hzValEl ? hzValEl.innerText : 0) || 0,
     percentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
@@ -1478,6 +1730,15 @@ function finishRecording() {
     hash: auditHash
   });
   renderAuditHistory();
+
+  // Auto-increment Fixture ID (e.g. Fixture #1 -> Fixture #2)
+  if (fixtureIdInput) {
+    const match = fixtureId.match(/^(.*?)(\d+)$/);
+    if (match) {
+      const nextNum = parseInt(match[2], 10) + 1;
+      fixtureIdInput.value = `${match[1]}${nextNum}`;
+    }
+  }
 }
 
 function qualTextToGrade(qualText) {
@@ -1492,7 +1753,7 @@ function saveAuditToHistory(entry) {
   try {
     let history = JSON.parse(localStorage.getItem('flickerhz_audit_history') || '[]');
     history.unshift(entry);
-    if (history.length > 5) history = history.slice(0, 5);
+    if (history.length > 50) history = history.slice(0, 50);
     localStorage.setItem('flickerhz_audit_history', JSON.stringify(history));
   } catch (e) {
     console.warn('Failed to save audit history:', e);
@@ -1509,23 +1770,178 @@ function renderAuditHistory() {
     }
     auditHistoryContainer.style.display = 'block';
     auditHistoryTbody.innerHTML = '';
-    history.forEach(item => {
+    history.forEach((item, idx) => {
       const row = document.createElement('tr');
       const gradeColor = item.grade.startsWith('A') ? 'var(--color-success)' : (item.grade === 'F' ? 'var(--color-error)' : 'var(--color-secondary)');
+      const isPass = item.svm <= 0.40;
       row.innerHTML = `
+        <td><strong>${item.fixtureId || ('Fixture #' + (idx + 1))}</strong></td>
         <td>${item.timestamp}</td>
         <td><strong>${item.freq.toFixed(1)} Hz</strong></td>
         <td>${item.percentFlicker.toFixed(1)}%</td>
         <td>${item.svm.toFixed(2)}</td>
         <td>${item.thd.toFixed(1)}%</td>
         <td style="color:${gradeColor};font-weight:bold;">${item.grade}</td>
-        <td><span class="badge-tag-sm" style="background:rgba(255,255,255,0.05);">${item.stability}</span></td>
+        <td><span class="badge-tag-sm ${isPass ? 'print-pass' : 'print-fail'}" style="${isPass ? 'background:rgba(0,230,118,0.2);color:#00e676;' : 'background:rgba(255,23,68,0.2);color:#ff1744;'}">${isPass ? 'PASS' : 'FAIL'}</span></td>
+        <td><code style="font-size:0.65rem;color:var(--color-muted);">${(item.hash || '').substring(0, 8)}</code></td>
       `;
       auditHistoryTbody.appendChild(row);
     });
   } catch (e) {
     console.warn('Failed to render audit history:', e);
   }
+}
+
+function generateAndPrintFacilityReport() {
+  const history = JSON.parse(localStorage.getItem('flickerhz_audit_history') || '[]');
+  if (history.length === 0) {
+    alert('No audit runs in ledger to print. Complete at least one 10s audit first.');
+    return;
+  }
+
+  const facilityName = (facilityNameInput && facilityNameInput.value.trim()) || 'Facility Lighting Inspection';
+  const now = new Date().toLocaleString();
+  const totalCount = history.length;
+  const compliantCount = history.filter(h => h.svm <= 0.40).length;
+  const passRate = ((compliantCount / totalCount) * 100).toFixed(1);
+  const avgFreq = (history.reduce((acc, h) => acc + (h.freq || 0), 0) / totalCount).toFixed(1);
+  const maxSvm = Math.max(...history.map(h => h.svm || 0)).toFixed(2);
+
+  let rowsHtml = '';
+  history.forEach((h, idx) => {
+    const isPass = h.svm <= 0.40;
+    rowsHtml += `
+      <tr>
+        <td><strong>${h.fixtureId || ('Fixture #' + (idx + 1))}</strong></td>
+        <td>${h.timestamp}</td>
+        <td>${h.freq.toFixed(1)} Hz</td>
+        <td>${h.percentFlicker.toFixed(1)}%</td>
+        <td>${h.svm.toFixed(2)}</td>
+        <td>${h.thd.toFixed(1)}%</td>
+        <td><strong>${h.grade}</strong></td>
+        <td><span class="print-badge ${isPass ? 'print-pass' : 'print-fail'}">${isPass ? 'PASS (≤0.4)' : 'FAIL (>0.4)'}</span></td>
+        <td><code>${(h.hash || '').substring(0, 8)}</code></td>
+      </tr>
+    `;
+  });
+
+  printableFacilityReport.innerHTML = `
+    <div class="print-header">
+      <div>
+        <h1>⚡ Consolidated Lighting Audit & Ecodesign Compliance Report</h1>
+        <p style="margin:2px 0 0 0;font-size:10pt;color:#64748b;">Facility: <strong>${facilityName}</strong> &bull; Generated: ${now}</p>
+      </div>
+      <div style="text-align:right;">
+        <span style="font-size:12pt;font-weight:bold;color:#0284c7;">FlashyLight v1.5.0</span><br>
+        <span style="font-size:8pt;color:#64748b;">Optical Rolling Shutter DSP Analyzer</span>
+      </div>
+    </div>
+
+    <div class="print-meta-grid">
+      <div class="print-meta-box">
+        <strong>Total Fixtures Audited</strong>
+        <span style="font-size:13pt;font-weight:bold;">${totalCount}</span>
+      </div>
+      <div class="print-meta-box">
+        <strong>Ecodesign Pass Rate</strong>
+        <span style="font-size:13pt;font-weight:bold;color:${passRate >= 80 ? '#16a34a' : '#dc2626'};">${passRate}%</span> (${compliantCount}/${totalCount})
+      </div>
+      <div class="print-meta-box">
+        <strong>Avg Oscillation Freq</strong>
+        <span style="font-size:13pt;font-weight:bold;">${avgFreq} Hz</span>
+      </div>
+      <div class="print-meta-box">
+        <strong>Worst Stroboscopic Index</strong>
+        <span style="font-size:13pt;font-weight:bold;color:${maxSvm <= 0.4 ? '#16a34a' : '#dc2626'};">SVM ${maxSvm}</span>
+      </div>
+    </div>
+
+    <table class="print-table">
+      <thead>
+        <tr>
+          <th>Fixture ID / Location</th>
+          <th>Time</th>
+          <th>Frequency</th>
+          <th>Percent Flicker</th>
+          <th>CIE SVM</th>
+          <th>THD</th>
+          <th>Grade</th>
+          <th>EU Ecodesign</th>
+          <th>SHA-256 Digest</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+
+    <div class="print-footer">
+      <div>
+        <strong>Regulatory Compliance References:</strong> CIE TN 006:2016 (SVM ≤ 0.40) &bull; Commission Regulation (EU) 2019/2020 &bull; IEEE 1789-2015 &bull; IES RP-16-10.
+      </div>
+      <div>
+        Camera Profile: ${activeLensName} (${(skewSeconds * 1000).toFixed(1)}ms readout skew)
+      </div>
+    </div>
+  `;
+
+  printableFacilityReport.style.display = 'block';
+  window.print();
+  setTimeout(() => {
+    printableFacilityReport.style.display = 'none';
+  }, 1000);
+}
+
+if (printFacilityReportBtn) {
+  printFacilityReportBtn.addEventListener('click', generateAndPrintFacilityReport);
+}
+
+// Ambient Tare Button Handlers
+if (tareAmbientBtn) {
+  tareAmbientBtn.addEventListener('click', () => {
+    if (isTaringAmbient) return;
+    isTaringAmbient = true;
+    ambientTareCount = 0;
+    ambientTareSum = 0;
+    if (tareBtnLabel) tareBtnLabel.innerText = 'Sampling...';
+    tareAmbientBtn.classList.add('active');
+    if (ambientTareBadge) {
+      ambientTareBadge.style.display = 'flex';
+      ambientTareBadge.querySelector('span').innerText = 'Measuring room light...';
+    }
+  });
+}
+
+if (clearTareBtn) {
+  clearTareBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ambientBaselineLuminance = 0;
+    isTaringAmbient = false;
+    if (ambientTareBadge) ambientTareBadge.style.display = 'none';
+    if (tareBtnLabel) tareBtnLabel.innerText = 'Tare Ambient';
+    if (tareAmbientBtn) tareAmbientBtn.classList.remove('active');
+  });
+}
+
+// Audio Sonification Toggle Handler
+if (audioToggleBtn) {
+  audioToggleBtn.addEventListener('click', () => {
+    initAudio();
+    isAudioEnabled = !isAudioEnabled;
+    if (isAudioEnabled) {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      audioToggleBtn.classList.add('active');
+      if (audioBtnLabel) audioBtnLabel.innerText = 'Audio: ON';
+    } else {
+      if (masterGain && audioCtx) {
+        masterGain.gain.setValueAtTime(0.00001, audioCtx.currentTime);
+      }
+      audioToggleBtn.classList.remove('active');
+      if (audioBtnLabel) audioBtnLabel.innerText = 'Audio: OFF';
+    }
+  });
 }
 
 if (clearHistoryBtn) {
