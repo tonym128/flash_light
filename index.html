@@ -72,6 +72,10 @@
               <div class="sub-metric-value" id="thd-val">--.-%</div>
             </div>
             <div class="sub-metric-card">
+              <div class="sub-metric-label">EU Ecodesign (SVM)</div>
+              <div class="sub-metric-value rating-none" id="svm-val">-.--</div>
+            </div>
+            <div class="sub-metric-card">
               <div class="sub-metric-label">Driver Quality</div>
               <div class="sub-metric-value rating-none" id="driver-quality-val">UNKNOWN</div>
             </div>
@@ -264,6 +268,32 @@
               <span>Download JSON</span>
             </button>
           </div>
+
+          <div id="audit-hash-container" style="display:none;margin-top:8px;text-align:center;">
+            <span class="audit-hash-badge" id="audit-hash-badge">SHA-256: --</span>
+          </div>
+
+          <!-- Audit Run History & Comparison -->
+          <div class="audit-history-container" id="audit-history-container" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:0.75rem;font-weight:700;color:var(--color-muted);letter-spacing:1px;text-transform:uppercase;">Audit Run History & Comparison</span>
+              <button id="clear-history-btn" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:0.7rem;">Clear</button>
+            </div>
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Freq</th>
+                  <th>Flicker%</th>
+                  <th>SVM</th>
+                  <th>THD</th>
+                  <th>Grade</th>
+                  <th>Stability</th>
+                </tr>
+              </thead>
+              <tbody id="audit-history-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -341,6 +371,7 @@
           </div>
           
           <button id="cal-next-1" class="btn btn-primary btn-block">Next Step</button>
+          <button id="open-strobe-btn" class="btn btn-secondary btn-block" style="margin-top:10px;">⚡ Launch Fullscreen Screen Strobe Tool</button>
         </div>
 
         <!-- Step 2: Instructions and Live Tracking -->
@@ -382,6 +413,25 @@
           <button id="cal-finish-btn" class="btn btn-primary btn-block">Apply Calibration</button>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <!-- Fullscreen Screen Strobe Generator Modal -->
+  <div id="strobe-modal" class="strobe-modal">
+    <canvas id="strobe-canvas" class="strobe-viewport"></canvas>
+    <div class="strobe-controls">
+      <h3 style="color:var(--color-primary);margin:0;">Screen Refresh Strobe Generator</h3>
+      <p style="font-size:0.75rem;color:var(--color-muted);text-align:center;margin:0;">Point another phone or test camera at this screen to calibrate its rolling shutter line skew.</p>
+      <div class="strobe-hz-buttons">
+        <button class="strobe-hz-btn active" data-hz="60">60 Hz</button>
+        <button class="strobe-hz-btn" data-hz="100">100 Hz</button>
+        <button class="strobe-hz-btn" data-hz="120">120 Hz</button>
+        <button class="strobe-hz-btn" data-hz="144">144 Hz</button>
+      </div>
+      <div style="display:flex;gap:10px;width:100%;">
+        <button id="toggle-strobe-btn" class="btn btn-primary" style="flex:1;">Pause Strobe</button>
+        <button id="close-strobe-btn" class="btn btn-secondary" style="flex:1;">Close Tool</button>
       </div>
     </div>
   </div>

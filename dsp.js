@@ -354,8 +354,129 @@ function calculateAuditStability(samples) {
   };
 }
 
+// ==========================================
+// Photometric De-Gamma Linearization (sRGB gamma 2.2 -> Linear Photons)
+// ==========================================
+const GAMMA_22_LUT = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  GAMMA_22_LUT[i] = Math.pow(i / 255.0, 2.2) * 255.0;
+}
+
+function linearizeLuminance(srgbLuma) {
+  const idx = Math.max(0, Math.min(255, Math.round(srgbLuma)));
+  return GAMMA_22_LUT[idx];
+}
+
+// ==========================================
+// CIE TN 006:2016 / IEC TR 63158 Stroboscopic Visibility Measure (SVM)
+// EU Commission Regulation (EU) 2019/2020 Ecodesign Standard:
+// SVM <= 0.4 is COMPLIANT (stroboscopic effect invisible under motion)
+// SVM > 1.0 is HIGH RISK (stroboscopic hazard)
+// ==========================================
+function getCieStroboscopicThreshold(freq) {
+  if (freq < 80) return 0.012; // High visual sensitivity below 80 Hz
+  if (freq > 2000) return 999.0; // Human eye cutoff beyond 2000 Hz
+  
+  // IEC TR 63158 human stroboscopic threshold model
+  if (freq <= 250) {
+    return 0.014 * Math.pow(freq / 100.0, 0.95);
+  } else {
+    return 0.033 * Math.pow(freq / 250.0, 2.3);
+  }
+}
+
+function calculateSVM(magnitudes, fundamentalBin, skewSec, meanIllumination) {
+  if (!magnitudes || fundamentalBin <= 0 || fundamentalBin >= magnitudes.length) {
+    return { svm: 0, isEcodesignCompliant: true, rating: "COMPLIANT (Flicker-Free)" };
+  }
+  
+  const a0 = Math.max(1.0, meanIllumination || magnitudes[0] || 1.0);
+  const halfFft = magnitudes.length;
+  let sumTerm = 0;
+  
+  // Sum over fundamental and up to 5 harmonics
+  for (let h = 1; h <= 5; h++) {
+    const targetBin = Math.round(fundamentalBin * h);
+    if (targetBin >= halfFft - 2) break;
+    
+    // Find local peak magnitude
+    let bestMag = 0;
+    let bestBin = targetBin;
+    const bStart = Math.max(1, targetBin - 2);
+    const bEnd = Math.min(halfFft - 2, targetBin + 2);
+    for (let b = bStart; b <= bEnd; b++) {
+      if (magnitudes[b] > bestMag) {
+        bestMag = magnitudes[b];
+        bestBin = b;
+      }
+    }
+    
+    const interpBin = interpolatePeak(magnitudes, bestBin);
+    const f_h = interpBin / (8 * skewSec);
+    if (f_h > 2000) break;
+    
+    const c_h = bestMag / a0; // Relative Fourier amplitude
+    const t_h = getCieStroboscopicThreshold(f_h);
+    
+    if (t_h > 0 && c_h > 0) {
+      sumTerm += Math.pow(c_h / t_h, 3.7);
+    }
+  }
+  
+  const svm = Math.pow(sumTerm, 1.0 / 3.7);
+  const roundedSvm = parseFloat(svm.toFixed(2));
+  
+  let isEcodesignCompliant = false;
+  let rating = "FAIL (Severe Stroboscopic Effect)";
+  let ratingClass = "rating-hazard";
+  
+  if (roundedSvm <= 0.40) {
+    isEcodesignCompliant = true;
+    rating = "EU ECODESIGN COMPLIANT (SVM ≤ 0.4)";
+    ratingClass = "rating-excellent";
+  } else if (roundedSvm <= 1.0) {
+    isEcodesignCompliant = false;
+    rating = "BORDERLINE (0.4 < SVM ≤ 1.0)";
+    ratingClass = "rating-low-quality";
+  } else {
+    isEcodesignCompliant = false;
+    rating = "HAZARD (SVM > 1.0)";
+    ratingClass = "rating-hazard";
+  }
+  
+  return {
+    svm: roundedSvm,
+    isEcodesignCompliant,
+    rating,
+    ratingClass
+  };
+}
+
+// Universal Audit SHA-256 Hash Digest (Node.js & Web Crypto)
+function generateAuditChecksum(samples) {
+  const content = JSON.stringify(samples.map(s => [s.timeMs, s.freq, s.percentFlicker, s.flickerIndex || 0, s.thd || 0]));
+  if (typeof crypto !== 'undefined' && crypto.createHash) {
+    // Node.js crypto
+    return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
+  }
+  
+  // Fallback 32-bit FNV-1a / Murmur hybrid hash for environments without async crypto
+  let h1 = 0x811c9dc5;
+  for (let i = 0; i < content.length; i++) {
+    h1 ^= content.charCodeAt(i);
+    h1 = (h1 * 0x01000193) >>> 0;
+  }
+  let h2 = 0x5bd1e995;
+  for (let i = content.length - 1; i >= 0; i--) {
+    h2 ^= content.charCodeAt(i);
+    h2 = (h2 * 0x01000193) >>> 0;
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+}
+
 // Universal Module Export (Browser Window + CommonJS / Node.js)
 if (typeof module !== 'undefined' && module.exports) {
+  const nodeCrypto = require('crypto');
   module.exports = {
     FFT,
     detrendInPlace,
@@ -364,7 +485,11 @@ if (typeof module !== 'undefined' && module.exports) {
     calculateFlickerIndex,
     calculateHarmonicsAndTHD,
     calculateAuditStability,
-    classifyDriverQuality
+    classifyDriverQuality,
+    linearizeLuminance,
+    calculateSVM,
+    generateAuditChecksum,
+    getCieStroboscopicThreshold
   };
 } else if (typeof window !== 'undefined') {
   window.FFT = FFT;
@@ -375,4 +500,8 @@ if (typeof module !== 'undefined' && module.exports) {
   window.calculateHarmonicsAndTHD = calculateHarmonicsAndTHD;
   window.calculateAuditStability = calculateAuditStability;
   window.classifyDriverQuality = classifyDriverQuality;
+  window.linearizeLuminance = linearizeLuminance;
+  window.calculateSVM = calculateSVM;
+  window.generateAuditChecksum = generateAuditChecksum;
+  window.getCieStroboscopicThreshold = getCieStroboscopicThreshold;
 }

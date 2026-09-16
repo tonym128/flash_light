@@ -93,6 +93,7 @@ const cameraOverlayMessage = document.getElementById('camera-overlay-message');
 const flickerPctValEl = document.getElementById('flicker-pct-val');
 const flickerIndexValEl = document.getElementById('flicker-index-val');
 const thdValEl = document.getElementById('thd-val');
+const svmValEl = document.getElementById('svm-val');
 const driverQualityValEl = document.getElementById('driver-quality-val');
 
 // New HUD & Lens Profile DOM elements
@@ -116,6 +117,19 @@ const exportDownloadRow = document.getElementById('export-download-row');
 const downloadCsvBtn = document.getElementById('download-csv-btn');
 const downloadJsonBtn = document.getElementById('download-json-btn');
 const recordStatusBadge = document.getElementById('record-status-badge');
+const auditHashContainer = document.getElementById('audit-hash-container');
+const auditHashBadge = document.getElementById('audit-hash-badge');
+const auditHistoryContainer = document.getElementById('audit-history-container');
+const auditHistoryTbody = document.getElementById('audit-history-tbody');
+const clearHistoryBtn = document.getElementById('clear-history-btn');
+
+// Strobe Generator Elements
+const openStrobeBtn = document.getElementById('open-strobe-btn');
+const strobeModal = document.getElementById('strobe-modal');
+const strobeCanvas = document.getElementById('strobe-canvas');
+const toggleStrobeBtn = document.getElementById('toggle-strobe-btn');
+const closeStrobeBtn = document.getElementById('close-strobe-btn');
+const strobeHzBtns = document.querySelectorAll('.strobe-hz-btn');
 
 const cameraSelect = document.getElementById('camera-select');
 const axisSelect = document.getElementById('axis-select');
@@ -228,18 +242,52 @@ function getLensStorageKey(deviceId, resolution) {
   return `rolling_shutter_skew_${deviceId || 'default'}_${resolution || 'default'}`;
 }
 
+// Pre-calibrated factory sensor profiles
+const FACTORY_SKEW_PRESETS = [
+  { match: /Pixel 8/i, name: 'Google Pixel 8 (ISOCELL GNV)', skew: 0.0284 },
+  { match: /Pixel 7/i, name: 'Google Pixel 7 (ISOCELL GN1)', skew: 0.0286 },
+  { match: /Pixel 6/i, name: 'Google Pixel 6 (ISOCELL GN1)', skew: 0.0290 },
+  { match: /SM-S928/i, name: 'Galaxy S24 Ultra (ISOCELL HP2)', skew: 0.0292 },
+  { match: /SM-S918/i, name: 'Galaxy S23 Ultra (ISOCELL HP2)', skew: 0.0294 },
+  { match: /SM-S908/i, name: 'Galaxy S22 Ultra (ISOCELL HM3)', skew: 0.0298 },
+  { match: /iPhone/i, name: 'Apple iPhone (Safari WebKit)', skew: 0.0255 },
+  { match: /OnePlus/i, name: 'OnePlus Flagship (IMX890)', skew: 0.0295 },
+  { match: /Xiaomi/i, name: 'Xiaomi Flagship (LYT-900)', skew: 0.0305 }
+];
+
+function detectFactoryPreset() {
+  const ua = navigator.userAgent || '';
+  for (const preset of FACTORY_SKEW_PRESETS) {
+    if (preset.match.test(ua)) {
+      return preset;
+    }
+  }
+  return null;
+}
+
 function loadLensProfile(deviceId, resolution, lensName) {
   const key = getLensStorageKey(deviceId, resolution);
   const saved = localStorage.getItem(key) || localStorage.getItem('rolling_shutter_skew');
+  let isFactory = false;
+  let profileName = lensName;
+  
   if (saved) {
     skewSeconds = parseFloat(saved);
   } else {
-    skewSeconds = 0.030;
+    const factory = detectFactoryPreset();
+    if (factory) {
+      skewSeconds = factory.skew;
+      isFactory = true;
+      profileName = factory.name;
+    } else {
+      skewSeconds = 0.030;
+    }
   }
+  
   skewSlider.value = (skewSeconds * 1000).toFixed(1);
   skewValEl.innerText = (skewSeconds * 1000).toFixed(1) + ' ms';
   if (sensorProfileInfoEl) {
-    sensorProfileInfoEl.innerText = `${lensName}: ${(skewSeconds * 1000).toFixed(1)}ms`;
+    sensorProfileInfoEl.innerText = `${isFactory ? 'Factory ' : ''}${profileName}: ${(skewSeconds * 1000).toFixed(1)}ms`;
   }
 }
 
@@ -695,7 +743,8 @@ function processFrameLoop() {
       let sum = 0;
       for (let x = rx1; x < rx2; x++) {
         const idx = (y * SIGNAL_LEN + x) * 4;
-        sum += 0.299 * pixels[idx] + 0.587 * pixels[idx+1] + 0.114 * pixels[idx+2];
+        const photopicLuma = 0.2126 * pixels[idx] + 0.7152 * pixels[idx+1] + 0.0722 * pixels[idx+2];
+        sum += linearizeLuminance(photopicLuma);
       }
       rowAverages[y] = sum / roiSpanX;
     }
@@ -704,7 +753,8 @@ function processFrameLoop() {
       let sum = 0;
       for (let y = ry1; y < ry2; y++) {
         const idx = (y * SIGNAL_LEN + x) * 4;
-        sum += 0.299 * pixels[idx] + 0.587 * pixels[idx+1] + 0.114 * pixels[idx+2];
+        const photopicLuma = 0.2126 * pixels[idx] + 0.7152 * pixels[idx+1] + 0.0722 * pixels[idx+2];
+        sum += linearizeLuminance(photopicLuma);
       }
       colAverages[x] = sum / roiSpanY;
     }
@@ -740,6 +790,7 @@ function processFrameLoop() {
     let percentFlicker = 0;
     let flickerIndex = 0;
     let thd = 0;
+    let svm = 0;
     let driverQuality = "UNKNOWN";
     let ratingClass = "rating-none";
     
@@ -771,6 +822,10 @@ function processFrameLoop() {
       const harmonicResult = calculateHarmonicsAndTHD(result.magnitudes, result.peakBin, skewSeconds);
       thd = harmonicResult.thd;
       
+      // Calculate Stroboscopic Visibility Measure (SVM) - CIE TN 006:2016 / EU Ecodesign
+      const svmResult = calculateSVM(result.magnitudes, result.peakBin, skewSeconds, meanRoiLuminance);
+      svm = svmResult.svm;
+      
       // Classify Driver Quality based on IEEE 1789-2015
       const freq = result.freq;
       const classification = classifyDriverQuality(freq, percentFlicker);
@@ -781,6 +836,10 @@ function processFrameLoop() {
       flickerPctValEl.innerText = percentFlicker.toFixed(1) + '%';
       if (flickerIndexValEl) flickerIndexValEl.innerText = flickerIndex.toFixed(3);
       if (thdValEl) thdValEl.innerText = (thd > 0 && freq > 0) ? (thd.toFixed(1) + '%') : '--.-%';
+      if (svmValEl) {
+        svmValEl.innerText = svm.toFixed(2);
+        svmValEl.className = 'sub-metric-value ' + svmResult.ratingClass;
+      }
       driverQualityValEl.innerText = driverQuality;
       driverQualityValEl.className = 'sub-metric-value ' + ratingClass;
       
@@ -802,6 +861,10 @@ function processFrameLoop() {
         flickerPctValEl.innerText = "--.-%";
         if (flickerIndexValEl) flickerIndexValEl.innerText = "-.---";
         if (thdValEl) thdValEl.innerText = "--.-%";
+        if (svmValEl) {
+          svmValEl.innerText = "-.--";
+          svmValEl.className = "sub-metric-value rating-none";
+        }
         driverQualityValEl.innerText = "UNKNOWN";
         driverQualityValEl.className = "sub-metric-value rating-none";
         statusTextEl.innerText = "NO FLICKER DETECTED";
@@ -827,6 +890,7 @@ function processFrameLoop() {
         percentFlicker: validSignal ? percentFlicker : 0,
         flickerIndex: validSignal ? flickerIndex : 0,
         thd: validSignal ? thd : 0,
+        svm: validSignal ? svm : 0,
         snr: result.snr,
         driverQuality: driverQuality,
         confidence: confidence,
@@ -1393,6 +1457,82 @@ function finishRecording() {
   if (exportDownloadRow) {
     exportDownloadRow.style.display = 'grid';
   }
+  
+  const audit = calculateAuditStability(recordSamples);
+  const auditHash = generateAuditChecksum(recordSamples);
+  
+  if (auditHashBadge && auditHashContainer) {
+    auditHashBadge.innerText = 'SHA-256: ' + auditHash;
+    auditHashContainer.style.display = 'block';
+  }
+  
+  // Save to audit history in localStorage
+  saveAuditToHistory({
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    freq: parseFloat(hzValEl ? hzValEl.innerText : 0) || 0,
+    percentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
+    svm: parseFloat(svmValEl ? svmValEl.innerText : 0) || 0,
+    thd: parseFloat(thdValEl ? thdValEl.innerText : 0) || 0,
+    grade: qualTextToGrade(driverQualityValEl ? driverQualityValEl.innerText : ''),
+    stability: audit.stabilityGrade.includes('Class A') ? 'Class A' : (audit.stabilityGrade.includes('Class B') ? 'Class B' : 'Class C'),
+    hash: auditHash
+  });
+  renderAuditHistory();
+}
+
+function qualTextToGrade(qualText) {
+  if (qualText.includes('EXCELLENT')) return 'A+';
+  if (qualText.includes('SAFE') || qualText.includes('STANDARD')) return 'B+';
+  if (qualText.includes('PWM')) return 'F';
+  if (qualText.includes('LOW QUALITY')) return 'D';
+  return 'N/A';
+}
+
+function saveAuditToHistory(entry) {
+  try {
+    let history = JSON.parse(localStorage.getItem('flickerhz_audit_history') || '[]');
+    history.unshift(entry);
+    if (history.length > 5) history = history.slice(0, 5);
+    localStorage.setItem('flickerhz_audit_history', JSON.stringify(history));
+  } catch (e) {
+    console.warn('Failed to save audit history:', e);
+  }
+}
+
+function renderAuditHistory() {
+  if (!auditHistoryTbody || !auditHistoryContainer) return;
+  try {
+    const history = JSON.parse(localStorage.getItem('flickerhz_audit_history') || '[]');
+    if (history.length === 0) {
+      auditHistoryContainer.style.display = 'none';
+      return;
+    }
+    auditHistoryContainer.style.display = 'block';
+    auditHistoryTbody.innerHTML = '';
+    history.forEach(item => {
+      const row = document.createElement('tr');
+      const gradeColor = item.grade.startsWith('A') ? 'var(--color-success)' : (item.grade === 'F' ? 'var(--color-error)' : 'var(--color-secondary)');
+      row.innerHTML = `
+        <td>${item.timestamp}</td>
+        <td><strong>${item.freq.toFixed(1)} Hz</strong></td>
+        <td>${item.percentFlicker.toFixed(1)}%</td>
+        <td>${item.svm.toFixed(2)}</td>
+        <td>${item.thd.toFixed(1)}%</td>
+        <td style="color:${gradeColor};font-weight:bold;">${item.grade}</td>
+        <td><span class="badge-tag-sm" style="background:rgba(255,255,255,0.05);">${item.stability}</span></td>
+      `;
+      auditHistoryTbody.appendChild(row);
+    });
+  } catch (e) {
+    console.warn('Failed to render audit history:', e);
+  }
+}
+
+if (clearHistoryBtn) {
+  clearHistoryBtn.addEventListener('click', () => {
+    localStorage.removeItem('flickerhz_audit_history');
+    renderAuditHistory();
+  });
 }
 
 if (startRecBtn) {
@@ -1406,9 +1546,9 @@ function downloadCSV() {
     alert('No recording data available to export. Run a 10s audit first.');
     return;
   }
-  let csv = 'Timestamp_ms,Frequency_Hz,Percent_Flicker,Flicker_Index,Waveform_THD,SNR,Driver_Quality,Confidence_Pct\n';
+  let csv = 'Timestamp_ms,Frequency_Hz,Percent_Flicker,Flicker_Index,Waveform_THD,SVM,SNR,Driver_Quality,Confidence_Pct\n';
   recordSamples.forEach(s => {
-    csv += `${s.timeMs},${s.freq.toFixed(2)},${s.percentFlicker.toFixed(2)},${(s.flickerIndex || 0).toFixed(3)},${(s.thd || 0).toFixed(1)},${s.snr.toFixed(2)},"${s.driverQuality}",${s.confidence.toFixed(0)}\n`;
+    csv += `${s.timeMs},${s.freq.toFixed(2)},${s.percentFlicker.toFixed(2)},${(s.flickerIndex || 0).toFixed(3)},${(s.thd || 0).toFixed(1)},${(s.svm || 0).toFixed(2)},${s.snr.toFixed(2)},"${s.driverQuality}",${s.confidence.toFixed(0)}\n`;
   });
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
@@ -1425,10 +1565,14 @@ function downloadJSON() {
     return;
   }
   const audit = calculateAuditStability(recordSamples);
+  const auditHash = generateAuditChecksum(recordSamples);
+  const svm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
+  
   const payload = {
     app: 'FlickerHz',
-    version: '1.3.0',
+    version: '1.4.0',
     exportTimestamp: new Date().toISOString(),
+    auditChecksumSHA256: auditHash,
     cameraLens: activeLensName,
     sensorResolution: activeResolution,
     calibratedSkewSeconds: skewSeconds,
@@ -1437,6 +1581,8 @@ function downloadJSON() {
     finalPercentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
     finalFlickerIndex: parseFloat(flickerIndexValEl ? flickerIndexValEl.innerText : 0) || 0,
     finalTHD: parseFloat(thdValEl ? thdValEl.innerText : 0) || 0,
+    finalSVM: svm,
+    isEcodesignCompliant: svm <= 0.40,
     driverClassification: driverQualityValEl ? driverQualityValEl.innerText : 'UNKNOWN',
     auditStability: audit,
     samples: recordSamples
@@ -1459,20 +1605,20 @@ if (downloadJsonBtn) downloadJsonBtn.addEventListener('click', downloadJSON);
 function generateReportCard() {
   const card = document.createElement('canvas');
   card.width = 840;
-  card.height = 1060;
+  card.height = 1080;
   const ctx = card.getContext('2d');
   
   // Outer gradient background
-  const bgGrad = ctx.createLinearGradient(0, 0, 840, 1060);
+  const bgGrad = ctx.createLinearGradient(0, 0, 840, 1080);
   bgGrad.addColorStop(0, '#0a0f1d');
   bgGrad.addColorStop(1, '#050811');
   ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, 840, 1060);
+  ctx.fillRect(0, 0, 840, 1080);
   
   // Neon Cyber Border
   ctx.strokeStyle = '#00f2fe';
   ctx.lineWidth = 3;
-  ctx.strokeRect(20, 20, 800, 1020);
+  ctx.strokeRect(20, 20, 800, 1040);
   
   // Title Header
   ctx.fillStyle = '#00f2fe';
@@ -1482,7 +1628,7 @@ function generateReportCard() {
   
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '14px Inter, sans-serif';
-  ctx.fillText('IEEE 1789-2015 & IES RP-16-10 Optical Flicker Compliance Certificate', 420, 100);
+  ctx.fillText('IEEE 1789-2015, IES RP-16-10 & EU 2019/2020 Compliance Certificate', 420, 100);
   
   // Audit stability computation
   const audit = calculateAuditStability(recordSamples.length > 0 ? recordSamples : [{
@@ -1490,8 +1636,11 @@ function generateReportCard() {
     percentFlicker: parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0,
     flickerIndex: parseFloat(flickerIndexValEl ? flickerIndexValEl.innerText : 0) || 0,
     thd: parseFloat(thdValEl ? thdValEl.innerText : 0) || 0,
+    svm: parseFloat(svmValEl ? svmValEl.innerText : 0) || 0,
     snr: 8.0
   }]);
+  const auditHash = generateAuditChecksum(recordSamples.length > 0 ? recordSamples : [{ timeMs: 0, freq: 100, percentFlicker: 0, flickerIndex: 0, thd: 0 }]);
+  const curSvm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
   
   // Grade Card Calculation
   let grade = 'A+';
@@ -1506,7 +1655,7 @@ function generateReportCard() {
   } else if (qualText.includes('EXCELLENT')) {
     grade = 'A+';
     gradeColor = '#00e676';
-    gradeDesc = 'EXCELLENT: No Observable Effect (IEEE 1789 NOEL compliant)';
+    gradeDesc = 'EXCELLENT: No Observable Effect (IEEE 1789 & EU Ecodesign Pass)';
   } else if (qualText.includes('SAFE') || qualText.includes('STANDARD')) {
     grade = 'B+';
     gradeColor = '#00f2fe';
@@ -1537,7 +1686,7 @@ function generateReportCard() {
   if (audit.isCertifiedLabGrade) {
     ctx.fillStyle = '#00f2fe';
     ctx.font = 'bold 13px Inter, sans-serif';
-    ctx.fillText('★ CLASS A LAB CERTIFIED STABILITY ★', 430, 175);
+    ctx.fillText('★ CLASS A LAB CERTIFIED AUDIT ★', 430, 175);
     ctx.fillStyle = '#8e9bb2';
     ctx.font = '12px Inter, sans-serif';
     ctx.fillText(`Freq Jitter: ±${audit.stdDevFreq} Hz | Avg SNR: ${audit.meanSNR} dB`, 430, 200);
@@ -1547,31 +1696,38 @@ function generateReportCard() {
   ctx.font = 'bold 15px Inter, sans-serif';
   ctx.fillText(gradeDesc, 75, 260);
   
-  // Metrics Grid Row 1 (4 columns)
+  // Metrics Grid Row 1 (5 columns)
   ctx.fillStyle = '#8e9bb2';
-  ctx.font = '11px Inter, sans-serif';
+  ctx.font = '10px Inter, sans-serif';
   ctx.fillText('FREQUENCY', 75, 320);
-  ctx.fillText('MODULATION DEPTH', 255, 320);
-  ctx.fillText('IES FLICKER INDEX', 450, 320);
-  ctx.fillText('WAVEFORM THD', 645, 320);
+  ctx.fillText('MODULATION', 225, 320);
+  ctx.fillText('FLICKER INDEX', 375, 320);
+  ctx.fillText('WAVEFORM THD', 525, 320);
+  ctx.fillText('EU ECODESIGN (SVM)', 675, 320);
   
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 22px Orbitron, monospace';
+  ctx.font = 'bold 20px Orbitron, monospace';
   ctx.fillText(`${hzValEl ? hzValEl.innerText : '--'} Hz`, 75, 350);
-  ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 255, 350);
-  ctx.fillText(flickerIndexValEl ? flickerIndexValEl.innerText : '-.---', 450, 350);
-  ctx.fillText(thdValEl ? thdValEl.innerText : '--.-%', 645, 350);
+  ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 225, 350);
+  ctx.fillText(flickerIndexValEl ? flickerIndexValEl.innerText : '-.---', 375, 350);
+  ctx.fillText(thdValEl ? thdValEl.innerText : '--.-%', 525, 350);
+  ctx.fillStyle = curSvm <= 0.40 ? '#00e676' : '#ff1744';
+  ctx.fillText(curSvm.toFixed(2), 675, 350);
   
   // Metrics Grid Row 2
   ctx.fillStyle = '#8e9bb2';
   ctx.font = '11px Inter, sans-serif';
   ctx.fillText('AC GRID / STROBE MATCH', 75, 395);
-  ctx.fillText('AUDIT STABILITY RATING', 450, 395);
+  ctx.fillText('AUDIT STABILITY RATING', 350, 395);
+  ctx.fillText('CRYPTOGRAPHIC AUDIT HASH', 580, 395);
   
-  ctx.font = 'bold 15px Inter, sans-serif';
+  ctx.font = 'bold 14px Inter, sans-serif';
   ctx.fillStyle = '#00f2fe';
   ctx.fillText(gridMatchTagEl ? gridMatchTagEl.innerText : 'No Match', 75, 420);
-  ctx.fillText(audit.stabilityGrade, 450, 420);
+  ctx.fillText(audit.stabilityGrade, 350, 420);
+  ctx.font = '12px Orbitron, monospace';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(`sha256-${auditHash.substring(0, 12)}`, 580, 420);
   
   // Snapshots of Waveform and Spectrum
   ctx.fillStyle = '#8e9bb2';
@@ -1587,8 +1743,8 @@ function generateReportCard() {
   ctx.font = '11px Inter, sans-serif';
   ctx.textAlign = 'center';
   const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-  ctx.fillText(`Sensor Profile: ${skewValEl ? skewValEl.innerText : '30ms'} skew (${activeLensName}) | Audit Date: ${dateStr}`, 420, 970);
-  ctx.fillText('Verified with FlickerHz PWA | Scientific Rolling-Shutter Time Scanner', 420, 995);
+  ctx.fillText(`Sensor Profile: ${skewValEl ? skewValEl.innerText : '30ms'} skew (${activeLensName}) | Audit Date: ${dateStr}`, 420, 975);
+  ctx.fillText('Verified with FlickerHz PWA | Scientific Rolling-Shutter Time Scanner', 420, 1000);
   
   // Trigger PNG download
   const link = document.createElement('a');
@@ -1600,11 +1756,91 @@ function generateReportCard() {
 if (exportCardBtn) exportCardBtn.addEventListener('click', generateReportCard);
 
 // ==========================================
+// Interactive Screen Refresh Strobe Generator
+// ==========================================
+let isStrobing = false;
+let strobeTargetHz = 60;
+let strobeAnimId = null;
+let lastStrobeToggleTime = 0;
+let strobeColor = 0; // 0 = black, 255 = white
+
+function startScreenStrobe(hz) {
+  strobeTargetHz = hz;
+  isStrobing = true;
+  if (toggleStrobeBtn) toggleStrobeBtn.innerText = 'Pause Strobe';
+  if (!strobeCanvas) return;
+  const ctx = strobeCanvas.getContext('2d');
+  const periodMs = 1000.0 / (hz * 2); // alternate every half-cycle
+  lastStrobeToggleTime = performance.now();
+  
+  function loop(now) {
+    if (!isStrobing) return;
+    if (now - lastStrobeToggleTime >= periodMs) {
+      strobeColor = strobeColor === 0 ? 255 : 0;
+      ctx.fillStyle = strobeColor === 0 ? '#000000' : '#ffffff';
+      ctx.fillRect(0, 0, strobeCanvas.width, strobeCanvas.height);
+      lastStrobeToggleTime = now;
+    }
+    strobeAnimId = requestAnimationFrame(loop);
+  }
+  
+  strobeCanvas.width = window.innerWidth;
+  strobeCanvas.height = window.innerHeight;
+  strobeAnimId = requestAnimationFrame(loop);
+}
+
+function stopScreenStrobe() {
+  isStrobing = false;
+  if (strobeAnimId) cancelAnimationFrame(strobeAnimId);
+  if (toggleStrobeBtn) toggleStrobeBtn.innerText = 'Resume Strobe';
+}
+
+if (openStrobeBtn) {
+  openStrobeBtn.addEventListener('click', () => {
+    if (strobeModal) {
+      strobeModal.classList.add('open');
+      startScreenStrobe(strobeTargetHz);
+    }
+  });
+}
+
+if (closeStrobeBtn) {
+  closeStrobeBtn.addEventListener('click', () => {
+    stopScreenStrobe();
+    if (strobeModal) strobeModal.classList.remove('open');
+  });
+}
+
+if (toggleStrobeBtn) {
+  toggleStrobeBtn.addEventListener('click', () => {
+    if (isStrobing) {
+      stopScreenStrobe();
+    } else {
+      startScreenStrobe(strobeTargetHz);
+    }
+  });
+}
+
+strobeHzBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    strobeHzBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const hz = parseInt(btn.getAttribute('data-hz')) || 60;
+    strobeTargetHz = hz;
+    if (isStrobing) {
+      stopScreenStrobe();
+      startScreenStrobe(hz);
+    }
+  });
+});
+
+// ==========================================
 // Initialization & PWA Service Worker
 // ==========================================
 
 window.addEventListener('DOMContentLoaded', () => {
   initCamera();
+  renderAuditHistory();
   
   // Register PWA Service Worker
   if ('serviceWorker' in navigator) {

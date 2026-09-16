@@ -10,19 +10,24 @@ Rather than relying on low-frequency ambient light sensors, FlickerHz exploits t
 
 - **Real-Time Frequency Measurement**: High-precision readout in Hz down to 0.1 Hz sub-bin resolution.
 - **Dynamic Core ROI Scanning**: Automatically detects bulb bounding box to isolate the bright core, boosting SNR by 15 dB and avoiding edge wash-out.
+- **Photometric De-Gamma Linearization**: Converts non-linear sRGB camera luma into true optical radiance ($Y_{\text{lin}} = Y^{2.2}$) via a precomputed zero-allocation LUT.
+- **EU Ecodesign Stroboscopic Visibility Measure (CIE SVM)**: Implements CIE TN 006:2016 and IEC TR 63158 standards, calculating multi-harmonic stroboscopic visibility ($SVM \le 0.4$ EU Ecodesign Regulation 2019/2020 pass threshold).
 - **IES Flicker Index (RP-16-10)**: Measures the ratio of area above the mean to total area under the waveform (0.00 to 1.00), accurately evaluating complex square/pulse duty cycles.
 - **Waveform THD & Harmonics**: Computes Total Harmonic Distortion ($THD = \sqrt{\sum V_h^2} / V_1 \times 100\%$) and detects 2nd through 5th harmonic overtones to identify triac phase-cut dimmers and cheap linear driver distortion.
 - **Exposure Quality & Shutter HUD**: Real-time alerts for pixel saturation ($Y \ge 250$), underexposure ($Y < 25$), and slow shutter speeds that average out flicker.
 - **Driver Quality Assessment**: Automatic IEEE 1789-2015 health classification detecting flicker-free DC drivers, AC ripple, and low-frequency PWM hazards.
+- **Pre-Calibrated Device Registry**: Built-in factory presets (`devices.json`) automatically recognizing Google Pixel, Samsung Galaxy, Apple iPhone, OnePlus, and Xiaomi rolling shutter timings.
+- **Interactive Fullscreen Screen Strobe Generator**: Built-in visual strobe generator for secondary displays with selectable frequencies ($60\text{ Hz}, 100\text{ Hz}, 120\text{ Hz}, 144\text{ Hz}$) for zero-hardware rolling shutter skew calibration.
 - **Auto-Detect Scan Axis**: Automatically detects whether rolling shutter lines run horizontally or vertically and locks onto the axis with the highest Signal-to-Noise Ratio (SNR).
 - **Synthetic Signal Generator (Self-Test Mode)**: Built-in mathematical waveform generator (100 Hz sine, 120 Hz sine, 250 Hz PWM, 0 Hz DC) for offline benchmarking and hardware validation.
 - **Multi-Lens Skew Persistence**: Stores individual rolling shutter readout calibrations per camera `deviceId` and resolution in `localStorage`.
-- **Monitor Refresh Strobe Calibration**: Calibrate rolling shutter readout skew against standard 60 Hz or 120 Hz computer screens without needing an AC mains light bulb.
 - **10-Second Audit Recorder & Export**: Capture 10-second diagnostic runs and export to formatted CSV and structured JSON.
-- **Certified Bulb Health Report Card**: Generates a high-resolution branded PNG summary card ($840 \times 1060\text{ px}$) complete with letter grading, Class A Lab Stability certification, modulation depth, and IEEE 1789 compliance.
+- **Tamper-Proof SHA-256 Audit Verification**: Generates cryptographic SHA-256 digital signatures for time-series samples and audit records, ensuring data integrity for commercial compliance audits.
+- **Multi-Run Audit Comparison History**: Local audit ledger tracking sequential tests across multiple luminaires with pass/fail metrics and instant JSON export.
+- **Certified 5-Metric Bulb Health Report Card**: Generates a high-resolution branded PNG summary card ($840 \times 1080\text{ px}$) complete with 5 key metrics (Frequency, Modulation, Flicker Index, THD, SVM), letter grading, Class A Lab Stability certification, and SHA-256 verification badge.
 - **Zero-GC High Performance**: Zero-allocation DSP pipeline using pre-allocated TypedArrays to eliminate garbage-collection stutter at 60fps.
 - **PWA Installation**: Install on your Android home screen and run fully offline (no Google Play Store required).
-- **Automated DSP Test Suite**: 13 automated unit tests (`npm test`) verifying FFT transforms, parabolic interpolation, IES Flicker Index, THD, and IEEE 1789 classifications.
+- **Automated DSP Test Suite**: 17 automated unit tests (`npm test`) verifying FFT transforms, parabolic interpolation, IES Flicker Index, THD, CIE SVM, and SHA-256 checksum generation.
 
 ---
 
@@ -99,10 +104,16 @@ $$\text{Flicker Frequency (Hz)} = \frac{\text{Number of Cycles in Frame}}{T_{\te
   $$\text{Flicker Index} = \frac{\text{Area Above Mean}}{\text{Total Area Under Waveform}}$$
 - **Total Harmonic Distortion (THD)**:
   $$\text{THD} = \frac{\sqrt{\sum_{h=2}^5 V_h^2}}{V_1} \times 100\%$$
+- **EU Ecodesign CIE TN 006:2016 Stroboscopic Visibility Measure (SVM)**:
+  $$SVM = \left(\sum_{m=1}^{5} \left(\frac{C_m}{T_m}\right)^{3.7}\right)^{1/3.7}$$
+  Where $C_m$ is the Fourier harmonic relative amplitude and $T_m$ is the human visual stroboscopic threshold defined in CIE TN 006:2016 / IEC TR 63158.
+  - **EU Ecodesign (Commission Regulation 2019/2020)**: Mandates $SVM \le 0.4$ for all general service LED/OLED lamps.
+  - **$SVM \le 0.4$**: **PASS** (Stroboscopic effect invisible to human eye).
+  - **$SVM > 0.4$**: **FAIL / HAZARD** (Stroboscopic motion illusion risk, induces migraines/fatigue).
 
-Classified according to IEEE 1789-2015:
-- **EXCELLENT (FLICKER-FREE)**: Percent Flicker $< 3.0\%$ or below NOEL limit. Constant-current DC driver.
-- **STANDARD / HIGH QUALITY (SAFE)**: Within IEEE 1789 low-risk boundaries.
-- **LOW QUALITY (AC RIPPLE)**: $100\text{ Hz}$ or $120\text{ Hz}$ with high modulation depth (insufficient capacitor filtering).
-- **LOW QUALITY (LOW-FREQ PWM)**: $130\text{ Hz} - 500\text{ Hz}$ with high flicker (cheap PWM dimmers with stroboscopic hazards).
+### Driver Quality Classifications (IEEE 1789-2015 & EU Ecodesign):
+- **EXCELLENT (FLICKER-FREE)**: Percent Flicker $< 3.0\%$ or below NOEL limit. High-efficiency DC constant-current driver.
+- **STANDARD / HIGH QUALITY (SAFE)**: Within IEEE 1789 low-risk boundaries and $SVM \le 0.4$.
+- **LOW QUALITY (AC RIPPLE)**: $100\text{ Hz}$ or $120\text{ Hz}$ with high modulation depth (cheap bridge rectifier lacking smoothing filter).
+- **LOW QUALITY (LOW-FREQ PWM)**: $130\text{ Hz} - 500\text{ Hz}$ with high flicker (harsh PWM dimming, high stroboscopic hazard).
 

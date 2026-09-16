@@ -7,7 +7,10 @@ const {
   calculateFlickerIndex,
   calculateHarmonicsAndTHD,
   calculateAuditStability,
-  classifyDriverQuality
+  classifyDriverQuality,
+  linearizeLuminance,
+  calculateSVM,
+  generateAuditChecksum
 } = require('../dsp.js');
 
 console.log('Running FlashyLight DSP Unit Test Suite...\n');
@@ -363,6 +366,69 @@ test('calculateAuditStability classifies jittery runs as Class C', () => {
   const result = calculateAuditStability(jitterySamples);
   assert.strictEqual(result.isCertifiedLabGrade, false);
   assert(result.stabilityGrade.includes('Class C'));
+});
+
+// ==========================================
+// 9. Photometric De-Gamma Linearization
+// ==========================================
+test('linearizeLuminance transforms sRGB non-linear curve to linear physical photons', () => {
+  assert.strictEqual(linearizeLuminance(0), 0);
+  assert(Math.abs(linearizeLuminance(255) - 255) < 0.01);
+  // Mid gray sRGB 128 (0.5) is ~ 0.5^2.2 * 255 = ~55.5 linear photons
+  const mid = linearizeLuminance(128);
+  assert(mid > 50 && mid < 60, `Mid-gray linear value ${mid.toFixed(2)} should be ~55.5`);
+});
+
+// ==========================================
+// 10. CIE Stroboscopic Visibility Measure (SVM) - EU Ecodesign
+// ==========================================
+test('calculateSVM identifies safe, compliant light sources (SVM <= 0.4)', () => {
+  const halfFft = 2048;
+  const magnitudes = new Float32Array(halfFft);
+  const skewSec = 0.030;
+  const peakBin = Math.round(100 * 8 * skewSec); // 100Hz bin
+  
+  // Very low AC ripple: DC = 100, AC = 0.5% (mag = 0.5)
+  magnitudes[peakBin] = 0.5;
+  const res = calculateSVM(magnitudes, peakBin, skewSec, 100.0);
+  assert.strictEqual(res.isEcodesignCompliant, true);
+  assert(res.svm <= 0.40, `Low ripple SVM ${res.svm} should be <= 0.40`);
+  assert(res.rating.includes('COMPLIANT'));
+});
+
+test('calculateSVM flags high AC ripple as failing EU Ecodesign (SVM > 1.0)', () => {
+  const halfFft = 2048;
+  const magnitudes = new Float32Array(halfFft);
+  const skewSec = 0.030;
+  const peakBin = Math.round(100 * 8 * skewSec);
+  
+  // High 100Hz ripple: DC = 100, AC = 35% (mag = 35)
+  magnitudes[peakBin] = 35.0;
+  const res = calculateSVM(magnitudes, peakBin, skewSec, 100.0);
+  assert.strictEqual(res.isEcodesignCompliant, false);
+  assert(res.svm > 1.0, `High ripple SVM ${res.svm} should be > 1.0`);
+  assert(res.rating.includes('HAZARD'));
+});
+
+// ==========================================
+// 11. Cryptographic Audit Checksum
+// ==========================================
+test('generateAuditChecksum creates consistent tamper-proof fingerprint', () => {
+  const samples = [
+    { timeMs: 0, freq: 100.0, percentFlicker: 5.0, flickerIndex: 0.015, thd: 2.1 },
+    { timeMs: 16, freq: 100.1, percentFlicker: 5.1, flickerIndex: 0.016, thd: 2.2 }
+  ];
+  const hash1 = generateAuditChecksum(samples);
+  const hash2 = generateAuditChecksum(samples);
+  assert.strictEqual(hash1, hash2, 'Checksum must be deterministic');
+  assert.strictEqual(typeof hash1, 'string');
+  assert(hash1.length >= 8);
+
+  const modifiedSamples = [
+    { timeMs: 0, freq: 120.0, percentFlicker: 5.0, flickerIndex: 0.015, thd: 2.1 }
+  ];
+  const hash3 = generateAuditChecksum(modifiedSamples);
+  assert.notStrictEqual(hash1, hash3, 'Modified data must produce different checksum');
 });
 
 console.log(`\nAll ${testsPassed} DSP unit tests passed successfully!\n`);

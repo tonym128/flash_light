@@ -1,0 +1,72 @@
+{
+  "devices": [
+    {
+      "match": "Pixel 8",
+      "modelName": "Google Pixel 8 / 8 Pro",
+      "sensor": "Samsung ISOCELL GNV",
+      "skewSeconds": 0.0284,
+      "typicalLineRateUs": 26.3
+    },
+    {
+      "match": "Pixel 7",
+      "modelName": "Google Pixel 7 / 7 Pro",
+      "sensor": "Samsung ISOCELL GN1",
+      "skewSeconds": 0.0286,
+      "typicalLineRateUs": 26.5
+    },
+    {
+      "match": "Pixel 6",
+      "modelName": "Google Pixel 6 / 6 Pro",
+      "sensor": "Samsung ISOCELL GN1",
+      "skewSeconds": 0.0290,
+      "typicalLineRateUs": 26.8
+    },
+    {
+      "match": "SM-S928",
+      "modelName": "Samsung Galaxy S24 Ultra",
+      "sensor": "Samsung ISOCELL HP2",
+      "skewSeconds": 0.0292,
+      "typicalLineRateUs": 27.0
+    },
+    {
+      "match": "SM-S918",
+      "modelName": "Samsung Galaxy S23 Ultra",
+      "sensor": "Samsung ISOCELL HP2",
+      "skewSeconds": 0.0294,
+      "typicalLineRateUs": 27.2
+    },
+    {
+      "match": "SM-S908",
+      "modelName": "Samsung Galaxy S22 Ultra",
+      "sensor": "Samsung ISOCELL HM3",
+      "skewSeconds": 0.0298,
+      "typicalLineRateUs": 27.6
+    },
+    {
+      "match": "iPhone",
+      "modelName": "Apple iPhone (Safari WebKit)",
+      "sensor": "Sony IMX Custom",
+      "skewSeconds": 0.0255,
+      "typicalLineRateUs": 23.6
+    },
+    {
+      "match": "OnePlus",
+      "modelName": "OnePlus Flagship Series",
+      "sensor": "Sony IMX890 / LYT-T808",
+      "skewSeconds": 0.0295,
+      "typicalLineRateUs": 27.3
+    },
+    {
+      "match": "Xiaomi",
+      "modelName": "Xiaomi Flagship Series",
+      "sensor": "Sony LYT-900 / IMX989",
+      "skewSeconds": 0.0305,
+      "typicalLineRateUs": 28.2
+    }
+  ],
+  "default": {
+    "modelName": "Generic Mobile CMOS Sensor",
+    "skewSeconds": 0.0300,
+    "typicalLineRateUs": 27.8
+  }
+}
