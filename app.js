@@ -812,18 +812,24 @@ async function startStreaming(deviceId) {
     cameraOverlayMessage.innerHTML = '<div class="spinner"></div><p>Connecting to camera feed...</p>';
   }
   
-  const constraints = {
-    video: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      facingMode: deviceId ? undefined : { ideal: 'environment' },
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    },
-    audio: false
+  const videoConstraints = (deviceId && deviceId !== 'default') ? {
+    deviceId: { exact: deviceId },
+    width: { ideal: 1280 },
+    height: { ideal: 720 }
+  } : {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1280 },
+    height: { ideal: 720 }
   };
   
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+    } catch (constraintErr) {
+      console.warn('Constrained getUserMedia failed, retrying with unconstrained video:', constraintErr);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
     currentStream = stream;
     
     // Explicitly configure video attributes for mobile/desktop playback
@@ -858,11 +864,11 @@ async function startStreaming(deviceId) {
         videoEl.addEventListener('loadeddata', onReady, { once: true });
         videoEl.addEventListener('loadedmetadata', onReady, { once: true });
         videoEl.addEventListener('canplay', onReady, { once: true });
-        setTimeout(onReady, 600); // 600ms safety guard
+        setTimeout(onReady, 500); // 500ms safety guard
       });
     }
     
-    activeDeviceId = deviceId || 'default';
+    activeDeviceId = (deviceId && deviceId !== 'default') ? deviceId : 'default';
     activeResolution = `${videoEl.videoWidth || 1280}x${videoEl.videoHeight || 720}`;
     
     const selectedOption = cameraSelect && cameraSelect.selectedIndex >= 0 ? cameraSelect.options[cameraSelect.selectedIndex] : null;
@@ -894,7 +900,7 @@ async function startStreaming(deviceId) {
     console.error('Error starting video stream:', err);
     if (cameraOverlayMessage) {
       cameraOverlayMessage.style.display = 'flex';
-      cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to access camera: ${err.message}<br>Make sure camera permissions are enabled.</p>`;
+      cameraOverlayMessage.innerHTML = `<p style="color:var(--color-error)">Failed to access camera: ${err.message}<br>Please ensure camera permissions are allowed.</p>`;
     }
   }
 }
@@ -916,24 +922,27 @@ function stopStream() {
 
 // Main 60fps frame loop
 function processFrameLoop() {
-  if (isFrozen) {
-    animationFrameId = requestAnimationFrame(processFrameLoop);
-    return;
-  }
-  
-  const hasLiveVideo = Boolean(videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0);
-  const isSynthetic = signalSource !== 'live';
-  
-  if (hasLiveVideo || isSynthetic) {
-    // 1. Acquire frame (from live camera or synthetic generator)
+  try {
+    if (isFrozen) return;
+    
+    const isSynthetic = signalSource !== 'live';
+    let frameAcquired = false;
+    
     if (isSynthetic) {
       generateSyntheticFrame(signalSource, skewSeconds);
-    } else {
-      offscreenCtx.drawImage(videoEl, 0, 0, SIGNAL_LEN, SIGNAL_LEN);
+      frameAcquired = true;
+    } else if (videoEl) {
+      try {
+        offscreenCtx.drawImage(videoEl, 0, 0, SIGNAL_LEN, SIGNAL_LEN);
+        frameAcquired = true;
+      } catch (drawErr) {
+        frameAcquired = false;
+      }
     }
     
-    const imgData = offscreenCtx.getImageData(0, 0, SIGNAL_LEN, SIGNAL_LEN);
-    const pixels = imgData.data;
+    if (frameAcquired) {
+      const imgData = offscreenCtx.getImageData(0, 0, SIGNAL_LEN, SIGNAL_LEN);
+      const pixels = imgData.data;
     
     // 2. Dynamic ROI (Region of Interest) Core Detection
     let startIdx = 128;
@@ -1210,8 +1219,11 @@ function processFrameLoop() {
     // Render scanner grid and HUD even before camera frames arrive so canvas is never blank
     renderScannerOverlay(currentActiveAxis, 0, SIGNAL_LEN, false);
   }
-  
-  animationFrameId = requestAnimationFrame(processFrameLoop);
+  } catch (loopErr) {
+    console.error('Error in processFrameLoop:', loopErr);
+  } finally {
+    animationFrameId = requestAnimationFrame(processFrameLoop);
+  }
 }
 
 // Render scanner visualization onto preview canvas
@@ -1229,15 +1241,20 @@ function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
   const h = previewCanvas.height;
   
   // Clear and draw video or synthetic canvas
+  let videoDrawn = false;
   if (isSynthetic) {
     previewCtx.drawImage(offscreenCanvas, 0, 0, w, h);
-  } else if (videoEl && videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+    videoDrawn = true;
+  } else if (videoEl) {
     try {
       previewCtx.drawImage(videoEl, 0, 0, w, h);
+      videoDrawn = true;
     } catch (drawErr) {
-      console.warn('Unable to draw video to previewCanvas:', drawErr);
+      videoDrawn = false;
     }
-  } else {
+  }
+  
+  if (!videoDrawn) {
     previewCtx.fillStyle = '#0a0f1d';
     previewCtx.fillRect(0, 0, w, h);
   }
@@ -2352,7 +2369,7 @@ strobeHzBtns.forEach(btn => {
 // Initialization & PWA Service Worker
 // ==========================================
 
-window.addEventListener('DOMContentLoaded', () => {
+function bootstrapApp() {
   initCamera();
   renderAuditHistory();
   
@@ -2361,15 +2378,27 @@ window.addEventListener('DOMContentLoaded', () => {
     navigator.serviceWorker.register('./sw.js')
       .then(reg => {
         console.log('ServiceWorker registered successfully with scope:', reg.scope);
+        // Prompt worker update to purge any stale cached assets
+        if (typeof reg.update === 'function') reg.update();
         const pwaBadge = document.getElementById('pwa-status');
-        pwaBadge.innerText = 'Offline Ready';
-        pwaBadge.className = 'status-badge offline';
+        if (pwaBadge) {
+          pwaBadge.innerText = 'Offline Ready';
+          pwaBadge.className = 'status-badge offline';
+        }
       })
       .catch(err => {
         console.error('ServiceWorker registration failed:', err);
         const pwaBadge = document.getElementById('pwa-status');
-        pwaBadge.innerText = 'Online Mode';
-        pwaBadge.className = 'status-badge online';
+        if (pwaBadge) {
+          pwaBadge.innerText = 'Online Mode';
+          pwaBadge.className = 'status-badge online';
+        }
       });
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrapApp);
+} else {
+  bootstrapApp();
+}

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flickerhz-v1.5.0';
+const CACHE_NAME = 'flickerhz-v1.6.0';
 const ASSETS = [
   './',
   './index.html',
@@ -25,6 +25,7 @@ self.addEventListener('activate', (e) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
+            console.log('Purging old service worker cache:', key);
             return caches.delete(key);
           }
         })
@@ -33,14 +34,20 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Network-First with Cache Fallback for instant updates and offline capability
 self.addEventListener('fetch', (e) => {
   e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
+    fetch(e.request).then((networkResponse) => {
+      if (networkResponse && networkResponse.status === 200) {
+        const responseClone = networkResponse.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(e.request, responseClone);
+        });
       }
-      return fetch(e.request).catch(() => {
-        // Return cached index.html as fallback for SPA
+      return networkResponse;
+    }).catch(() => {
+      return caches.match(e.request).then((cachedResponse) => {
+        if (cachedResponse) return cachedResponse;
         if (e.request.mode === 'navigate') {
           return caches.match('./index.html');
         }
