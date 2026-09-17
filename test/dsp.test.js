@@ -506,6 +506,34 @@ test('getHealthFeedback flags severe AC ripple as high migraine hazard', () => {
   assert(fb.comparison.includes('Far worse than any incandescent'));
 });
 
+// ==========================================
+// 14. Natural Sunlight & Pure DC Detection
+// ==========================================
+test('classifyDriverQuality classifies freq 0 Hz or sub-0.8% flicker as natural sunlight / pure DC', () => {
+  const sunlightZero = classifyDriverQuality(0, 0);
+  assert.strictEqual(sunlightZero.quality, 'NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)');
+  assert.strictEqual(sunlightZero.ratingClass, 'rating-sunlight');
+  assert.strictEqual(sunlightZero.isNaturalDaylight, true);
+
+  const sunlightSubPercent = classifyDriverQuality(100, 0.4);
+  assert.strictEqual(sunlightSubPercent.quality, 'NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)');
+  assert.strictEqual(sunlightSubPercent.ratingClass, 'rating-sunlight');
+  assert.strictEqual(sunlightSubPercent.isNaturalDaylight, true);
+});
+
+test('getHealthFeedback recognizes natural daylight as biological gold standard', () => {
+  const fbDaylight = getHealthFeedback({ isNaturalDaylight: true });
+  assert.strictEqual(fbDaylight.riskLevel, 'NONE');
+  assert(fbDaylight.headline.includes('Natural Daylight / Pure DC'));
+  assert.strictEqual(fbDaylight.badgeClass, 'feedback-sunlight');
+  assert(fbDaylight.summary.includes('zero temporal light modulation'));
+
+  const fbFreqZero = getHealthFeedback({ freq: 0, percentFlicker: 0, svm: 0 });
+  assert.strictEqual(fbFreqZero.riskLevel, 'NONE');
+  assert(fbFreqZero.headline.includes('Natural Daylight / Pure DC'));
+  assert.strictEqual(fbFreqZero.badgeClass, 'feedback-sunlight');
+});
+
 console.log(`\nAll ${testsPassed} DSP unit tests passed successfully!\n`);
 
 

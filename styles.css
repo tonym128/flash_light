@@ -285,6 +285,11 @@ body {
   text-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
 }
 
+.rating-sunlight {
+  color: #ffb300;
+  text-shadow: 0 0 10px rgba(255, 179, 0, 0.5);
+}
+
 .rating-high-quality {
   color: var(--color-primary);
   text-shadow: 0 0 8px rgba(0, 242, 254, 0.4);
@@ -382,6 +387,13 @@ body {
   border-color: rgba(255, 23, 68, 0.3);
 }
 
+.match-tag.sunlight {
+  background: rgba(255, 179, 0, 0.16);
+  color: #ffb300;
+  border-color: #ffb300;
+  box-shadow: 0 0 12px rgba(255, 179, 0, 0.35);
+}
+
 /* Real-Time Health & Diagnostic Feedback Card */
 .health-feedback-card {
   margin-top: 18px;
@@ -391,6 +403,17 @@ body {
   padding: 14px 16px;
   text-align: left;
   transition: all 0.3s ease;
+}
+
+.health-feedback-card.feedback-sunlight {
+  border-color: rgba(255, 179, 0, 0.5);
+  background: rgba(255, 179, 0, 0.05);
+}
+
+.badge-tag-sm.badge-sunlight {
+  background: rgba(255, 179, 0, 0.2);
+  color: #ffb300;
+  border: 1px solid #ffb300;
 }
 
 .health-feedback-card.feedback-safe {

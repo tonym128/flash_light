@@ -138,6 +138,7 @@ let scanMode = 'auto'; // 'auto', 'x', 'y'
 let currentActiveAxis = 'y'; // 'y' = horizontal bands (vertical scanning), 'x' = vertical bands (horizontal scanning)
 let latestPeakBin = 0;
 let latestValidSignal = false;
+let latestIsNaturalDaylight = false;
 let roiMode = 'auto'; // 'auto' (bright bulb core), 'full' (full frame)
 let currentRoi = { x: 128, y: 128, w: 256, h: 256 };
 
@@ -424,7 +425,9 @@ function handleWorkerMessage(e) {
   currentActiveAxis = d.winner;
   latestPeakBin = d.peakBin || 0;
   latestValidSignal = !!d.validSignal;
+  latestIsNaturalDaylight = !!d.isNaturalDaylight;
   const validSignal = d.validSignal;
+  const isNaturalDaylight = !!d.isNaturalDaylight;
   const freq = d.freq;
   const snr = d.snr;
   const percentFlicker = d.percentFlicker;
@@ -439,6 +442,7 @@ function handleWorkerMessage(e) {
 
   updateMetricsDisplay({
     validSignal,
+    isNaturalDaylight,
     freq,
     snr,
     percentFlicker,
@@ -488,6 +492,7 @@ function handleWorkerMessage(e) {
 function updateMetricsDisplay(data) {
   const {
     validSignal,
+    isNaturalDaylight,
     freq,
     snr,
     percentFlicker,
@@ -501,7 +506,43 @@ function updateMetricsDisplay(data) {
     meanRoiLuminance
   } = data;
 
-  if (validSignal) {
+  if (isNaturalDaylight) {
+    confidence = 100;
+    smoothedFreq = 0;
+
+    hzValEl.innerText = '0.0';
+    statusTextEl.innerText = isSynthetic ? "SYNTHETIC PURE DC ACTIVE" : "☀️ NATURAL SUNLIGHT / PURE DC DETECTED";
+    statusTextEl.style.color = "#ffb300";
+
+    flickerPctValEl.innerText = '0.0%';
+    if (flickerIndexValEl) flickerIndexValEl.innerText = '0.000';
+    if (thdValEl) thdValEl.innerText = '0.0%';
+    if (svmValEl) {
+      svmValEl.innerText = '0.00';
+      svmValEl.className = 'sub-metric-value rating-excellent';
+    }
+    driverQualityValEl.innerText = driverQuality || "NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)";
+    driverQualityValEl.className = 'sub-metric-value rating-sunlight';
+
+    if (shutterHudEl) shutterHudEl.style.display = 'none';
+
+    // Real-Time Health, Neurological & Ergonomic Feedback for Natural Daylight
+    if (healthFeedbackCard && typeof getHealthFeedback === 'function') {
+      const fb = getHealthFeedback({ freq: 0, percentFlicker: 0, svm: 0, thd: 0, isNaturalDaylight: true });
+      if (fb) {
+        healthFeedbackCard.style.display = 'block';
+        healthFeedbackCard.className = 'health-feedback-card ' + fb.badgeClass;
+        if (feedbackHeadline) feedbackHeadline.innerText = fb.headline;
+        if (feedbackRiskBadge) {
+          feedbackRiskBadge.innerText = fb.riskLevel;
+          feedbackRiskBadge.className = 'badge-tag-sm badge-sunlight';
+        }
+        if (feedbackSummary) feedbackSummary.innerText = fb.summary;
+        if (feedbackComparison) feedbackComparison.innerText = fb.comparison;
+        if (feedbackRecommendation) feedbackRecommendation.innerText = fb.recommendation;
+      }
+    }
+  } else if (validSignal) {
     if (smoothedFreq === 0) {
       smoothedFreq = freq;
     } else {
@@ -573,9 +614,20 @@ function updateMetricsDisplay(data) {
     }
   }
 
-  if (confidenceBarEl) confidenceBarEl.style.width = confidence + '%';
+  if (confidenceBarEl) {
+    confidenceBarEl.style.width = confidence + '%';
+    if (isNaturalDaylight) {
+      confidenceBarEl.style.background = 'linear-gradient(90deg, #ffb300, #ffe600)';
+    } else if (confidence > 75) {
+      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #00e676)';
+    } else if (confidence > 35) {
+      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ffe600)';
+    } else {
+      confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ff1744)';
+    }
+  }
   if (confidencePctEl) confidencePctEl.innerText = Math.round(confidence) + '%';
-  updateGridMatchTag(smoothedFreq, confidence);
+  updateGridMatchTag(smoothedFreq, confidence, isNaturalDaylight);
 }
 
 // ==========================================
@@ -1113,23 +1165,31 @@ function processFrameLoop() {
       currentActiveAxis = winner;
       
       const result = (winner === 'y') ? analysisResultY : analysisResultX;
-      const validSignal = result.snr > 3.2;
-      latestPeakBin = result.peakBin;
-      latestValidSignal = validSignal;
-      
+      const rawSignal = (winner === 'y') ? rowAverages : colAverages;
+      const metricStart = (winner === 'y') ? ry1 : rx1;
+      const metricEnd = (winner === 'y') ? ry2 : rx2;
+
+      // Relative Fourier peak modulation relative to mean scene illumination
+      const effectiveIllumination = Math.max(1.0, meanRoiLuminance - ambientBaselineLuminance);
+      const relModulation = result.peakMag / (effectiveIllumination * 32.0);
+      const hasPeriodicCarrier = (result.snr >= 4.2 && relModulation >= 0.012) || result.snr >= 6.5;
+
+      let validSignal = false;
+      let isNaturalDaylight = false;
+      let freq = 0;
       let percentFlicker = 0;
       let flickerIndex = 0;
       let thd = 0;
       let svm = 0;
       let svmRatingClass = "rating-none";
-      let driverQuality = "UNKNOWN";
+      let driverQuality = "NO LIGHT DETECTED";
       let ratingClass = "rating-none";
       
-      if (validSignal) {
-        const rawSignal = (winner === 'y') ? rowAverages : colAverages;
-        const metricStart = (winner === 'y') ? ry1 : rx1;
-        const metricEnd = (winner === 'y') ? ry2 : rx2;
-        
+      if (hasPeriodicCarrier) {
+        validSignal = true;
+        isNaturalDaylight = false;
+        freq = result.freq;
+
         percentFlicker = calculatePercentFlicker(rawSignal, result.waveform, metricStart, metricEnd, ambientBaselineLuminance);
         flickerIndex = calculateFlickerIndex(rawSignal, result.waveform, metricStart, metricEnd, ambientBaselineLuminance);
         
@@ -1165,14 +1225,31 @@ function processFrameLoop() {
             confidence
           });
         }
+      } else if (meanRoiLuminance >= 25) {
+        // Natural sunlight / pure continuous DC illumination
+        validSignal = false;
+        isNaturalDaylight = true;
+        freq = 0;
+        percentFlicker = 0.0;
+        flickerIndex = 0.000;
+        thd = 0.0;
+        svm = 0.00;
+        svmRatingClass = "rating-excellent";
+        driverQuality = "NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)";
+        ratingClass = "rating-sunlight";
       }
+
+      latestPeakBin = isNaturalDaylight ? 0 : result.peakBin;
+      latestValidSignal = validSignal;
+      latestIsNaturalDaylight = isNaturalDaylight;
       
       signalWaveformBuffer.set(result.waveform);
       fftMagnitudesBuffer.set(result.magnitudes);
       
       updateMetricsDisplay({
         validSignal,
-        freq: result.freq,
+        isNaturalDaylight,
+        freq,
         snr: result.snr,
         percentFlicker,
         flickerIndex,
@@ -1185,7 +1262,7 @@ function processFrameLoop() {
         meanRoiLuminance
       });
       
-      updateAudioSonification(result.freq, percentFlicker, thd, result.snr);
+      updateAudioSonification(freq, percentFlicker, thd, result.snr);
     }
     
     // Session recording progress update
@@ -1201,7 +1278,9 @@ function processFrameLoop() {
       }
     }
     if (confidenceBarEl) {
-      if (confidence > 75) {
+      if (latestIsNaturalDaylight) {
+        confidenceBarEl.style.background = 'linear-gradient(90deg, #ffb300, #ffe600)';
+      } else if (confidence > 75) {
         confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #00e676)';
       } else if (confidence > 35) {
         confidenceBarEl.style.background = 'linear-gradient(90deg, #00f2fe, #ffe600)';
@@ -1211,7 +1290,7 @@ function processFrameLoop() {
     }
     
     // Grid Match & Overlays
-    updateGridMatchTag(smoothedFreq, confidence);
+    updateGridMatchTag(smoothedFreq, confidence, latestIsNaturalDaylight);
     renderScannerOverlay(currentActiveAxis, 0, SIGNAL_LEN, signalSource !== 'live');
     renderWaveformChart();
     renderSpectrumChart(latestPeakBin, latestValidSignal);
@@ -1342,7 +1421,13 @@ function renderScannerOverlay(axis, startIdx, endIdx, isSynthetic) {
 }
 
 // Update the match tag for AC frequencies
-function updateGridMatchTag(freq, conf) {
+function updateGridMatchTag(freq, conf, isNaturalDaylight = false) {
+  if (isNaturalDaylight) {
+    gridMatchTagEl.innerText = '☀️ Natural Daylight / Continuous DC';
+    gridMatchTagEl.className = 'match-tag sunlight';
+    return;
+  }
+
   if (conf < 25) {
     gridMatchTagEl.innerText = 'No Match';
     gridMatchTagEl.className = 'match-tag none';
@@ -2057,11 +2142,14 @@ function downloadJSON() {
   const svm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
   const currentHz = parseFloat(hzValEl ? hzValEl.innerText : 0) || 0;
   const currentFlickerPct = parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0;
+  const qualText = driverQualityValEl ? driverQualityValEl.innerText : 'UNKNOWN';
+  const isSunlight = qualText.includes('SUNLIGHT') || (gridMatchTagEl && gridMatchTagEl.innerText.includes('Natural Daylight'));
   const healthFeedback = typeof getHealthFeedback === 'function' ? getHealthFeedback({
     freq: currentHz,
     percentFlicker: currentFlickerPct,
     svm: svm,
-    confidence: confidence
+    confidence: confidence,
+    isNaturalDaylight: isSunlight
   }) : null;
   
   const payload = {
@@ -2078,8 +2166,8 @@ function downloadJSON() {
     finalFlickerIndex: parseFloat(flickerIndexValEl ? flickerIndexValEl.innerText : 0) || 0,
     finalTHD: parseFloat(thdValEl ? thdValEl.innerText : 0) || 0,
     finalSVM: svm,
-    isEcodesignCompliant: svm <= 0.40,
-    driverClassification: driverQualityValEl ? driverQualityValEl.innerText : 'UNKNOWN',
+    isEcodesignCompliant: isSunlight ? true : (svm <= 0.40),
+    driverClassification: qualText,
     clinicalHealthFeedback: healthFeedback,
     auditStability: audit,
     samples: recordSamples
@@ -2140,22 +2228,28 @@ function generateReportCard() {
   const curSvm = parseFloat(svmValEl ? svmValEl.innerText : 0) || 0;
   const curFreq = parseFloat(hzValEl ? hzValEl.innerText : 0) || 0;
   const curFlickerPct = parseFloat(flickerPctValEl ? flickerPctValEl.innerText : 0) || 0;
+  const qualText = driverQualityValEl ? driverQualityValEl.innerText : '';
+  const isSunlight = qualText.includes('SUNLIGHT') || (gridMatchTagEl && gridMatchTagEl.innerText.includes('Natural Daylight'));
 
   // Clinical health feedback
   const health = typeof getHealthFeedback === 'function' ? getHealthFeedback({
     freq: curFreq,
     percentFlicker: curFlickerPct,
     svm: curSvm,
-    confidence: confidence
+    confidence: confidence,
+    isNaturalDaylight: isSunlight
   }) : null;
   
   // Grade Card Calculation
   let grade = 'A+';
   let gradeColor = '#00e676';
   let gradeDesc = 'EXCELLENT: Flicker-Free Constant-Current DC Driver';
-  const qualText = driverQualityValEl ? driverQualityValEl.innerText : '';
   
-  if (confidence < 25) {
+  if (isSunlight) {
+    grade = 'A+';
+    gradeColor = '#ffb300';
+    gradeDesc = 'PERFECT: Natural Daylight / Pure DC (Biological Gold Standard, Zero Modulation)';
+  } else if (confidence < 25) {
     grade = 'N/A';
     gradeColor = '#8e9bb2';
     gradeDesc = 'NO STABLE FLICKER DETECTED (Ambient / Constant DC)';
@@ -2214,11 +2308,11 @@ function generateReportCard() {
   
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 18px Orbitron, monospace';
-  ctx.fillText(`${curFreq > 0 ? curFreq.toFixed(1) : '--'} Hz`, 75, 305);
+  ctx.fillText(`${curFreq > 0 ? curFreq.toFixed(1) : (isSunlight ? '0.0' : '--')} Hz`, 75, 305);
   ctx.fillText(flickerPctValEl ? flickerPctValEl.innerText : '--%', 225, 305);
   ctx.fillText(flickerIndexValEl ? flickerIndexValEl.innerText : '-.---', 375, 305);
   ctx.fillText(thdValEl ? thdValEl.innerText : '--.-%', 525, 305);
-  ctx.fillStyle = curSvm <= 0.40 ? '#00e676' : '#ff1744';
+  ctx.fillStyle = (isSunlight || curSvm <= 0.40) ? '#00e676' : '#ff1744';
   ctx.fillText(curSvm.toFixed(2), 675, 305);
   
   // Metrics Grid Row 2
@@ -2229,7 +2323,7 @@ function generateReportCard() {
   ctx.fillText('CRYPTOGRAPHIC AUDIT HASH', 580, 340);
   
   ctx.font = 'bold 13px Inter, sans-serif';
-  ctx.fillStyle = '#00f2fe';
+  ctx.fillStyle = isSunlight ? '#ffb300' : '#00f2fe';
   ctx.fillText(gridMatchTagEl ? gridMatchTagEl.innerText : 'No Match', 75, 362);
   ctx.fillText(audit.stabilityGrade, 350, 362);
   ctx.font = '11px Orbitron, monospace';
@@ -2238,9 +2332,10 @@ function generateReportCard() {
   
   // Clinical Health & Incandescent Comparison Card
   if (health) {
-    const healthBorderColor = health.riskLevel === 'NONE' ? '#00e676' :
+    const healthBorderColor = isSunlight ? '#ffb300' :
+                              (health.riskLevel === 'NONE' ? '#00e676' :
                               health.riskLevel === 'LOW' ? '#00f2fe' :
-                              health.riskLevel === 'MODERATE' ? '#ffe600' : '#ff1744';
+                              health.riskLevel === 'MODERATE' ? '#ffe600' : '#ff1744');
     ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
     ctx.fillRect(50, 385, 740, 105);
     ctx.strokeStyle = healthBorderColor;
@@ -2256,7 +2351,7 @@ function generateReportCard() {
     ctx.fillText(health.summary, 65, 430);
     
     ctx.fillStyle = '#8e9bb2';
-    ctx.fillText(`Incandescent Benchmark: ${health.incandescentComparison}`, 65, 452);
+    ctx.fillText(`Benchmark: ${health.comparison || health.incandescentComparison || 'N/A'}`, 65, 452);
     ctx.fillText(`Ergonomic Advice: ${health.recommendation}`, 65, 474);
   }
 

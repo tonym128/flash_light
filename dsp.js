@@ -140,6 +140,16 @@ function classifyDriverQuality(freq, percentFlicker) {
   let lowRiskLimit = 8.0;
   let noelLimit = 3.3; // No Observable Effect Level
   
+  if (freq === 0 || percentFlicker < 0.8) {
+    return {
+      quality: "NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)",
+      ratingClass: "rating-sunlight",
+      lowRiskLimit: 8.0,
+      noelLimit: 3.3,
+      isNaturalDaylight: true
+    };
+  }
+
   if (freq < 90) {
     lowRiskLimit = freq * 0.025;
     noelLimit = freq * 0.01;
@@ -153,7 +163,8 @@ function classifyDriverQuality(freq, percentFlicker) {
       quality: "EXCELLENT (FLICKER-FREE)",
       ratingClass: "rating-excellent",
       lowRiskLimit,
-      noelLimit
+      noelLimit,
+      isNaturalDaylight: false
     };
   } else if (percentFlicker <= noelLimit) {
     return {
@@ -487,6 +498,18 @@ function getHealthFeedback(metrics) {
   const percentFlicker = metrics.percentFlicker || 0;
   const svm = metrics.svm || 0;
   const thd = metrics.thd || 0;
+  const isSunlight = Boolean(metrics.isSunlight || metrics.isNaturalDaylight || (freq === 0 && percentFlicker < 1.0));
+
+  if (isSunlight) {
+    return {
+      riskLevel: 'NONE',
+      headline: '☀️ Natural Daylight / Pure DC (Gold Standard)',
+      summary: 'Natural sunlight emits continuous, pure photons with zero temporal light modulation. This is the biological gold standard for human eyesight.',
+      comparison: 'Supreme light quality. Eliminates all electrical AC mains ripple, harmonic distortion, and stroboscopic phantom arrays.',
+      recommendation: 'Optimal for circadian health, deep focus, reading, and mental well-being. 100% headache-free.',
+      badgeClass: 'feedback-sunlight'
+    };
+  }
 
   if (freq === 0 || percentFlicker < 3.0) {
     return {

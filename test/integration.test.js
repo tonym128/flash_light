@@ -248,6 +248,38 @@ async function runAllTests() {
       }
     });
 
+    // 4b. Runtime Verification: verify natural daylight / pure DC updates UI with 0 Hz and compliant metrics
+    sandbox.handleWorkerMessage({
+      data: {
+        type: 'FRAME_RESULT',
+        winner: 'y',
+        validSignal: false,
+        isNaturalDaylight: true,
+        freq: 0,
+        snr: 2.1,
+        peakBin: 0,
+        peakMag: 3.5,
+        percentFlicker: 0.0,
+        flickerIndex: 0.000,
+        thd: 0.0,
+        svm: 0.00,
+        svmRatingClass: 'rating-excellent',
+        driverQuality: 'NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)',
+        ratingClass: 'rating-sunlight',
+        meanRoiLuminance: 140,
+        waveform: new Float32Array(512),
+        magnitudes: new Float32Array(2048),
+        rowAverages: new Float32Array(512),
+        colAverages: new Float32Array(512)
+      }
+    });
+
+    assert.strictEqual(mockElements['hz-val'].innerText, '0.0', 'Hz should be 0.0 under natural sunlight');
+    assert(mockElements['status-text'].innerText.includes('NATURAL SUNLIGHT'), 'Status should report natural sunlight');
+    assert.strictEqual(mockElements['flicker-pct-val'].innerText, '0.0%', 'Flicker percentage should be 0.0%');
+    assert.strictEqual(mockElements['svm-val'].innerText, '0.00', 'SVM should be 0.00 under natural sunlight');
+    assert(mockElements['grid-match-tag'].innerText.includes('Natural Daylight'), 'Grid tag should display Natural Daylight');
+
     // 5. Runtime Verification: verify processFrameLoop executes in both Worker & Inline modes
     sandbox.processFrameLoop();
     sandbox.dspWorker = null; // simulate main-thread inline fallback

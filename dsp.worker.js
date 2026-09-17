@@ -123,22 +123,34 @@ self.onmessage = function(e) {
   }
 
   const result = (winner === 'y') ? analysisResultY : analysisResultX;
-  const validSignal = result.snr > 3.2;
+  const rawSignal = (winner === 'y') ? rowAverages : colAverages;
+  const metricStart = (winner === 'y') ? ry1 : rx1;
+  const metricEnd = (winner === 'y') ? ry2 : rx2;
 
+  // Relative Fourier peak modulation relative to mean scene illumination
+  const effectiveIllumination = Math.max(1.0, meanRoiLuminance - ambientBaseline);
+  const relModulation = result.peakMag / (effectiveIllumination * 32.0);
+
+  // A genuine periodic carrier wave requires spectral prominence above sensor shot noise floor
+  const hasPeriodicCarrier = (result.snr >= 4.2 && relModulation >= 0.012) || result.snr >= 6.5;
+
+  let validSignal = false;
+  let isNaturalDaylight = false;
+  let freq = 0;
   let percentFlicker = 0;
   let flickerIndex = 0;
   let thd = 0;
   let svm = 0;
   let svmRating = "N/A";
   let svmRatingClass = "rating-none";
-  let isEcodesignCompliant = false;
-  let driverQuality = "UNKNOWN";
+  let isEcodesignCompliant = true;
+  let driverQuality = "NO LIGHT DETECTED";
   let ratingClass = "rating-none";
 
-  if (validSignal) {
-    const rawSignal = (winner === 'y') ? rowAverages : colAverages;
-    const metricStart = (winner === 'y') ? ry1 : rx1;
-    const metricEnd = (winner === 'y') ? ry2 : rx2;
+  if (hasPeriodicCarrier) {
+    validSignal = true;
+    isNaturalDaylight = false;
+    freq = result.freq;
 
     percentFlicker = calculatePercentFlicker(rawSignal, result.waveform, metricStart, metricEnd, ambientBaseline);
     flickerIndex = calculateFlickerIndex(rawSignal, result.waveform, metricStart, metricEnd, ambientBaseline);
@@ -155,6 +167,34 @@ self.onmessage = function(e) {
     const classification = classifyDriverQuality(result.freq, percentFlicker);
     driverQuality = classification.quality;
     ratingClass = classification.ratingClass;
+  } else if (meanRoiLuminance >= 25) {
+    // Natural sunlight / pure continuous DC illumination (zero temporal flicker)
+    validSignal = false;
+    isNaturalDaylight = true;
+    freq = 0;
+    percentFlicker = 0.0;
+    flickerIndex = 0.000;
+    thd = 0.0;
+    svm = 0.00;
+    svmRating = "EU ECODESIGN COMPLIANT (SVM = 0.00 — Natural Daylight / DC)";
+    svmRatingClass = "rating-excellent";
+    isEcodesignCompliant = true;
+    driverQuality = "NATURAL SUNLIGHT / PURE DC (FLICKER-FREE)";
+    ratingClass = "rating-sunlight";
+  } else {
+    // Ambient darkness / no light source
+    validSignal = false;
+    isNaturalDaylight = false;
+    freq = 0;
+    percentFlicker = 0.0;
+    flickerIndex = 0.000;
+    thd = 0.0;
+    svm = 0.00;
+    svmRating = "N/A (No Light)";
+    svmRatingClass = "rating-none";
+    isEcodesignCompliant = true;
+    driverQuality = "NO LIGHT DETECTED";
+    ratingClass = "rating-none";
   }
 
   // Transfer waveform & magnitudes buffers for zero-copy rendering
@@ -166,9 +206,10 @@ self.onmessage = function(e) {
     frameId,
     winner,
     validSignal,
-    freq: result.freq,
+    isNaturalDaylight,
+    freq,
     snr: result.snr,
-    peakBin: result.peakBin,
+    peakBin: isNaturalDaylight ? 0 : result.peakBin,
     peakMag: result.peakMag,
     percentFlicker,
     flickerIndex,
@@ -179,6 +220,7 @@ self.onmessage = function(e) {
     isEcodesignCompliant,
     driverQuality,
     ratingClass,
+    meanRoiLuminance,
     waveform: outWaveform,
     magnitudes: outMagnitudes,
     rowAverages,
